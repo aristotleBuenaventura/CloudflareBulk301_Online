@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { ThemeToggle } from './ThemeToggle'
 
 interface LoginScreenProps {
   onLogin: (workerUrl: string, adminSecret: string) => Promise<boolean>
@@ -30,6 +31,9 @@ export function LoginScreen({
   return (
     <div className="login-page">
       <div className="login-atmosphere" aria-hidden="true" />
+      <div className="login-top-actions">
+        <ThemeToggle compact />
+      </div>
       <div className="login-shell">
         <header className="login-brand">
           <p className="brand-mark">Bulk301</p>

@@ -5,6 +5,7 @@ import { LoginScreen } from './components/LoginScreen'
 import { PhilTimeClock } from './components/PhilTimeClock'
 import { ResultsPanel } from './components/ResultsPanel'
 import { ScheduleEditor } from './components/ScheduleEditor'
+import { ThemeToggle } from './components/ThemeToggle'
 import {
   applyStream,
   loginToWorker,
@@ -345,6 +346,7 @@ export default function App() {
           <span className="worker-chip" title={session.workerUrl}>
             {session.workerUrl.replace(/^https?:\/\//, '')}
           </span>
+          <ThemeToggle compact />
           <button type="button" className="ghost-btn" onClick={logout}>
             Sign out
           </button>
@@ -403,7 +405,6 @@ export default function App() {
 
       <footer className="app-footer">
         <span>Developed by Aris</span>
-        <span>Schedule-only · 25 parallel</span>
       </footer>
     </div>
   )

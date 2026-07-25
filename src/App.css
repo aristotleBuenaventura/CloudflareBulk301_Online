@@ -1,20 +1,36 @@
 :root {
-  --bg: #0a0e0d;
-  --bg-2: #101614;
-  --surface: rgba(18, 26, 23, 0.72);
-  --line: rgba(220, 232, 226, 0.09);
-  --line-strong: rgba(220, 232, 226, 0.16);
-  --text: #e7efe9;
-  --muted: #7f9488;
-  --accent: #d4a04a;
-  --accent-soft: rgba(212, 160, 74, 0.14);
-  --ok: #3ecf8e;
-  --fail: #ff6b6b;
-  --warn: #e8b84a;
-  --pending: #6eb8e8;
+  color-scheme: light;
+  --bg: #f3f4f6;
+  --bg-2: #f7f8fa;
+  --surface: #fbfcfd;
+  --surface-2: #f7f8fa;
+  --line: #d5dde5;
+  --line-strong: #c4ced8;
+  --text: #1c2834;
+  --muted: #667788;
+  --accent: #45698f;
+  --accent-hover: #385678;
+  --accent-soft: #e9eef4;
+  --accent-ink: #ffffff;
+  --accent-rgb: 69, 105, 143;
+  --ok: #2d7a56;
+  --fail: #a34a4a;
+  --warn: #9a6b2f;
+  --pending: #6b8aad;
+  --weekend-tint: rgba(69, 105, 143, 0.06);
+  --atmosphere-1: rgba(69, 105, 143, 0.1);
+  --atmosphere-2: rgba(69, 105, 143, 0.05);
+  --atmosphere-3: rgba(243, 244, 246, 0.9);
+  --atmosphere-base-a: #f3f4f6;
+  --atmosphere-base-b: #f7f8fa;
+  --progress-a: #6b8aad;
+  --hover-fill: rgba(28, 40, 52, 0.04);
+  --remove-hover: rgba(163, 74, 74, 0.1);
+  --shadow: 0 14px 32px rgba(28, 40, 52, 0.07);
+  --clock: #45698f;
   --radius: 12px;
-  --font-display: 'Syne', system-ui, sans-serif;
-  --font-body: 'Figtree', system-ui, sans-serif;
+  --font-display: 'Segoe UI', 'Helvetica Neue', system-ui, sans-serif;
+  --font-body: 'Segoe UI', 'Helvetica Neue', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text);
   background: var(--bg);
@@ -22,6 +38,38 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #14161a;
+  --bg-2: #171a20;
+  --surface: #1e232b;
+  --surface-2: #181b21;
+  --line: #3a424e;
+  --line-strong: #4a5360;
+  --text: #f1f3f5;
+  --muted: #a7b0bc;
+  --accent: #3a424f;
+  --accent-hover: #4a5360;
+  --accent-soft: #2f3540;
+  --accent-ink: #ffffff;
+  --accent-rgb: 58, 66, 79;
+  --ok: #6dca96;
+  --fail: #e08a8a;
+  --warn: #e0b06a;
+  --pending: #c5ccd6;
+  --weekend-tint: rgba(255, 255, 255, 0.03);
+  --atmosphere-1: rgba(255, 255, 255, 0.04);
+  --atmosphere-2: rgba(255, 255, 255, 0.02);
+  --atmosphere-3: rgba(18, 21, 26, 0.9);
+  --atmosphere-base-a: #16191f;
+  --atmosphere-base-b: #12151a;
+  --progress-a: #566070;
+  --hover-fill: rgba(255, 255, 255, 0.05);
+  --remove-hover: rgba(224, 138, 138, 0.12);
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  --clock: #c5ccd6;
 }
 
 *,
@@ -85,12 +133,14 @@ a {
 
 .primary-btn {
   background: var(--accent);
-  color: #1a1308;
+  color: var(--accent-ink);
   font-weight: 700;
+  border-color: transparent;
 }
 
 .primary-btn:hover:not(:disabled) {
-  background: #e0b05a;
+  background: var(--accent-hover);
+  filter: none;
 }
 
 .secondary-btn {
@@ -100,8 +150,8 @@ a {
 }
 
 .secondary-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(220, 232, 226, 0.28);
+  background: var(--hover-fill);
+  border-color: var(--line-strong);
 }
 
 .ghost-btn {
@@ -113,6 +163,104 @@ a {
 
 .ghost-btn:hover:not(:disabled) {
   color: var(--text);
+}
+
+/* Theme toggle — same pattern as MR-DATABASE-TOOL */
+.theme-toggle {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.theme-toggle-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.theme-toggle-track {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3rem;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.theme-toggle-track button {
+  border: 0;
+  border-radius: 9px;
+  padding: 0.55rem 0.7rem;
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.theme-toggle-track button .theme-toggle-icon {
+  flex-shrink: 0;
+}
+
+.theme-toggle-track button:hover {
+  color: var(--text);
+}
+
+.theme-toggle-track button.is-active {
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.25);
+}
+
+.theme-toggle.is-compact .theme-toggle-track {
+  min-width: 148px;
+}
+
+.theme-toggle.is-compact .theme-toggle-track button {
+  padding: 0.4rem 0.55rem;
+  font-size: 0.78rem;
+  gap: 0.28rem;
+}
+
+.theme-toggle.is-compact .theme-toggle-icon {
+  width: 14px;
+  height: 14px;
+}
+
+[data-theme='dark'] .theme-toggle-track {
+  background: #171a20;
+  border-color: #3a424e;
+}
+
+[data-theme='dark'] .theme-toggle-track button.is-active {
+  background: #3a424f;
+  color: #fff;
+  border: 1px solid #566070;
+  box-shadow: none;
+}
+
+[data-theme='dark'] .primary-btn {
+  background: #3a424f;
+  border: 1px solid #566070;
+}
+
+[data-theme='dark'] .primary-btn:hover:not(:disabled) {
+  background: #4a5360;
+}
+
+.login-top-actions {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 2;
 }
 
 .hint,
@@ -137,11 +285,13 @@ a {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 55% 40% at 8% 0%, rgba(212, 160, 74, 0.16), transparent 55%),
-    radial-gradient(ellipse 45% 35% at 92% 8%, rgba(62, 207, 142, 0.08), transparent 50%),
-    radial-gradient(ellipse 70% 50% at 50% 100%, rgba(16, 40, 34, 0.9), transparent 60%),
-    linear-gradient(180deg, #0c1210 0%, #080b0a 100%);
-  animation: atmosphere-drift 18s ease-in-out infinite alternate;
+    radial-gradient(
+      120% 80% at 100% 0%,
+      rgba(var(--accent-rgb), 0.1),
+      transparent 42%
+    ),
+    linear-gradient(180deg, var(--atmosphere-base-a) 0%, var(--atmosphere-base-b) 100%);
+  animation: none;
 }
 
 @keyframes atmosphere-drift {
@@ -208,7 +358,7 @@ a {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow);
 }
 
 .token-row {
@@ -244,6 +394,8 @@ a {
   gap: 1rem 1.5rem;
   padding: 1.15rem clamp(1rem, 3vw, 2.25rem);
   border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--shadow);
   animation: rise-in 450ms ease both;
 }
 
@@ -315,7 +467,7 @@ a {
   font-weight: 600;
   letter-spacing: 0.08em;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  color: var(--clock);
   line-height: 1;
   animation: clock-glow 2.4s ease-in-out infinite;
 }
@@ -326,7 +478,7 @@ a {
     text-shadow: 0 0 0 transparent;
   }
   50% {
-    text-shadow: 0 0 24px rgba(212, 160, 74, 0.25);
+    text-shadow: 0 0 20px rgba(var(--accent-rgb), 0.22);
   }
 }
 
@@ -340,11 +492,11 @@ a {
 }
 
 .clock-compact-status {
-  max-width: 42ch;
+  max-width: min(56ch, 100%);
   margin-inline: auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .command-actions {
@@ -381,13 +533,13 @@ a {
   align-items: start;
 }
 
-/* ——— Sections (not heavy cards) ——— */
+/* ——— Sections ——— */
 .section {
   padding: 1.15rem 1.2rem 1.25rem;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
-  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
 }
 
 .section-head {
@@ -511,7 +663,7 @@ a {
 }
 
 .schedule-row.is-weekend {
-  background: rgba(212, 160, 74, 0.05);
+  background: var(--weekend-tint);
 }
 
 .schedule-row.is-active {
@@ -536,7 +688,7 @@ a {
   font-size: 0.65rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--accent);
+  color: var(--clock);
   font-weight: 700;
 }
 
@@ -596,7 +748,7 @@ a {
 
 .progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, #a8782a, var(--accent));
+  background: linear-gradient(90deg, var(--progress-a), var(--accent));
   transition: width 200ms ease;
 }
 
@@ -681,7 +833,7 @@ a {
 
 .domain-list button:hover:not(:disabled) {
   color: var(--fail);
-  background: rgba(255, 107, 107, 0.1);
+  background: var(--remove-hover);
 }
 
 /* ——— Results ——— */
@@ -773,7 +925,7 @@ a {
 /* ——— Footer ——— */
 .app-footer {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 1rem;
   flex-wrap: wrap;
   padding: 0.9rem clamp(1rem, 3vw, 2rem) 1.2rem;
@@ -804,6 +956,7 @@ a {
 
   .clock-compact-status {
     margin-inline: 0;
+    max-width: none;
   }
 
   .command-actions {
