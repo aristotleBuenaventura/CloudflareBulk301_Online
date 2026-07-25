@@ -140,21 +140,6 @@ export async function applyOneDomain(
   return body.result
 }
 
-/** Apply all domains concurrently on the Worker (batched in parallel). */
-export async function applyAll(
-  session: WorkerSession,
-  claimFingerprint?: string,
-): Promise<ApplyRunSummary> {
-  const response = await fetch(joinUrl(session.workerUrl, '/api/apply-all'), {
-    method: 'POST',
-    headers: authHeaders(session.adminSecret),
-    body: JSON.stringify({ claimFingerprint }),
-  })
-  if (!response.ok) throw new Error(await parseError(response))
-  const body = (await response.json()) as { summary: ApplyRunSummary }
-  return body.summary
-}
-
 export async function finishApply(
   session: WorkerSession,
   results: DomainResult[],
@@ -170,31 +155,78 @@ export async function finishApply(
   return body.summary
 }
 
-/** Run many domain applies at once (browser-side pool), updating as each finishes. */
-export async function mapPool<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T, index: number) => Promise<R>,
-  onResult?: (result: R, index: number, completed: number) => void,
-): Promise<R[]> {
-  const results = new Array<R>(items.length)
-  let nextIndex = 0
-  let completed = 0
+export type ApplyStreamEvent =
+  | {
+      type: 'start'
+      total: number
+      concurrency: number
+      targetUrl: string
+      dayKey: string
+    }
+  | {
+      type: 'result'
+      index: number
+      completed: number
+      total: number
+      concurrency: number
+      result: DomainResult
+    }
+  | { type: 'done'; summary: ApplyRunSummary }
+  | { type: 'error'; error: string }
 
-  async function worker(): Promise<void> {
-    while (true) {
-      const i = nextIndex++
-      if (i >= items.length) return
-      const result = await fn(items[i], i)
-      results[i] = result
-      completed++
-      onResult?.(result, i, completed)
+/**
+ * One browser connection; Worker runs ~25 Cloudflare applies in parallel and
+ * streams NDJSON progress (bypasses the ~6 connections/host browser limit).
+ */
+export async function applyStream(
+  session: WorkerSession,
+  opts: {
+    claimFingerprint?: string
+    domains: string[]
+    onEvent: (event: ApplyStreamEvent) => void
+  },
+): Promise<ApplyRunSummary> {
+  const response = await fetch(joinUrl(session.workerUrl, '/api/apply-stream'), {
+    method: 'POST',
+    headers: authHeaders(session.adminSecret),
+    body: JSON.stringify({ claimFingerprint: opts.claimFingerprint }),
+  })
+
+  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.body) throw new Error('No response stream from Worker.')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let summary: ApplyRunSummary | null = null
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      const event = JSON.parse(trimmed) as ApplyStreamEvent
+      opts.onEvent(event)
+      if (event.type === 'done') summary = event.summary
+      if (event.type === 'error') throw new Error(event.error)
     }
   }
 
-  const poolSize = Math.max(1, Math.min(concurrency, items.length || 1))
-  await Promise.all(Array.from({ length: poolSize }, () => worker()))
-  return results
+  const tail = buffer.trim()
+  if (tail) {
+    const event = JSON.parse(tail) as ApplyStreamEvent
+    opts.onEvent(event)
+    if (event.type === 'done') summary = event.summary
+    if (event.type === 'error') throw new Error(event.error)
+  }
+
+  if (!summary) throw new Error('Apply stream ended without a summary.')
+  return summary
 }
 
 export const UI_APPLY_CONCURRENCY = 25

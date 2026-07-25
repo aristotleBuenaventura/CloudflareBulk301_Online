@@ -6,11 +6,8 @@ import { PhilTimeClock } from './components/PhilTimeClock'
 import { ResultsPanel } from './components/ResultsPanel'
 import { ScheduleEditor } from './components/ScheduleEditor'
 import {
-  applyOneDomain,
-  claimAuto,
-  finishApply,
+  applyStream,
   loginToWorker,
-  mapPool,
   saveConfig,
   tickSchedule,
   UI_APPLY_CONCURRENCY,
@@ -91,87 +88,69 @@ export default function App() {
         domain,
         status: 'pending',
       }))
+      const nextResults = [...pending]
+      const domainIndex = new Map(unique.map((d, i) => [d, i]))
+
       setResults(pending)
       setProgress({ completed: 0, total: unique.length })
       setTodayTarget(opts.targetUrl)
       setStatusMessage(
-        `${opts.label} · parallel ×${Math.min(UI_APPLY_CONCURRENCY, unique.length)} · 0/${unique.length}`,
+        `${opts.label} · Worker parallel ×${Math.min(UI_APPLY_CONCURRENCY, unique.length)} · 0/${unique.length}`,
       )
       setScheduleStatus(
-        `${opts.label} · running ${Math.min(UI_APPLY_CONCURRENCY, unique.length)} at a time…`,
+        `${opts.label} · ${Math.min(UI_APPLY_CONCURRENCY, unique.length)} in flight on Worker…`,
       )
 
-      if (opts.claimFingerprint) {
-        await claimAuto(activeSession, opts.claimFingerprint)
-      }
-
-      const nextResults = [...pending]
-      const active = new Set<string>()
-
-      await mapPool(
-        unique,
-        UI_APPLY_CONCURRENCY,
-        async (domain, index) => {
-          active.add(domain)
-          setProgress({
-            completed: nextResults.filter((r) => r.status !== 'pending').length,
-            total: unique.length,
-            currentDomain: `${active.size} running · ${domain}`,
-          })
-          setScheduleStatus(
-            `Parallel 301 · ${active.size} in flight · ${domain}`,
-          )
-
-          let result: DomainResult
-          try {
-            result = await applyOneDomain(activeSession, domain)
-          } catch (error) {
-            result = {
-              domain,
-              status: 'failed',
-              message: error instanceof Error ? error.message : String(error),
+      try {
+        const summary = await applyStream(activeSession, {
+          claimFingerprint: opts.claimFingerprint,
+          domains: unique,
+          onEvent: (event) => {
+            if (event.type === 'start') {
+              setStatusMessage(
+                `${opts.label} · Worker parallel ×${event.concurrency} · 0/${event.total}`,
+              )
+              setScheduleStatus(
+                `${opts.label} · ${event.concurrency} Cloudflare calls in flight…`,
+              )
+              return
             }
-          }
+            if (event.type === 'result') {
+              const idx =
+                domainIndex.get(event.result.domain) ?? event.index
+              nextResults[idx] = event.result
+              setResults([...nextResults])
+              setProgress({
+                completed: event.completed,
+                total: event.total,
+                currentDomain: `${event.concurrency} max in flight · ${event.result.domain}`,
+              })
+              setStatusMessage(
+                `${opts.label} · parallel ×${event.concurrency} · ${event.completed}/${event.total}`,
+              )
+              setScheduleStatus(
+                `Worker parallel 301 · ${event.completed}/${event.total}`,
+              )
+            }
+          },
+        })
 
-          active.delete(domain)
-          nextResults[index] = result
-          return result
-        },
-        (_result, _index, completed) => {
-          setResults([...nextResults])
-          setProgress({
-            completed,
-            total: unique.length,
-            currentDomain:
-              active.size > 0
-                ? `${active.size} still running`
-                : undefined,
-          })
-          setStatusMessage(
-            `${opts.label} · parallel · ${completed}/${unique.length}`,
-          )
-        },
-      )
-
-      const summary = await finishApply(
-        activeSession,
-        nextResults,
-        opts.claimFingerprint,
-      )
-      setLastRun(summary)
-      setResults(summary.results)
-      setTodayTarget(summary.targetUrl)
-      setStatusMessage(
-        `${opts.label} finished · ${summary.success} ok / ${summary.failed} failed → ${summary.targetUrl}`,
-      )
-      setScheduleStatus(
-        `Finished ${summary.dayKey} → ${summary.targetUrl} (${summary.success} ok / ${summary.failed} fail)`,
-      )
-      setProgress(null)
-      setLiveRun(false)
-      applyingRef.current = false
-      setApplying(false)
-      return summary
+        setLastRun(summary)
+        setResults(summary.results)
+        setTodayTarget(summary.targetUrl)
+        setStatusMessage(
+          `${opts.label} finished · ${summary.success} ok / ${summary.failed} failed → ${summary.targetUrl}`,
+        )
+        setScheduleStatus(
+          `Finished ${summary.dayKey} → ${summary.targetUrl} (${summary.success} ok / ${summary.failed} fail)`,
+        )
+        return summary
+      } finally {
+        setProgress(null)
+        setLiveRun(false)
+        applyingRef.current = false
+        setApplying(false)
+      }
     },
     [],
   )
@@ -366,7 +345,8 @@ export default function App() {
           <h1>Redirect schedule workspace</h1>
           <p>
             When Philippine time hits your schedule, all domains get 301s in
-            parallel (25 at a time) with live progress in this UI.
+            parallel on the Worker (25 Cloudflare calls in flight; live stream
+            updates this UI).
           </p>
         </div>
 

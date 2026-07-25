@@ -1,6 +1,8 @@
 import {
+  APPLY_CONCURRENCY,
   applyOneDomain,
   applyScheduledRedirects,
+  mapPool,
   summarizeResults,
 } from './apply'
 import {
@@ -339,6 +341,115 @@ export default {
           }
           throw error
         }
+      }
+
+      /**
+       * Single HTTP connection; Worker runs APPLY_CONCURRENCY (25) Cloudflare
+       * calls in parallel and streams NDJSON progress (avoids browser 6-conn limit).
+       */
+      if (path === '/api/apply-stream' && request.method === 'POST') {
+        if (!isAuthorized(request, env)) return unauthorized()
+        const body = (await request.json().catch(() => ({}))) as {
+          claimFingerprint?: string
+        }
+
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            const send = (payload: unknown) => {
+              controller.enqueue(
+                encoder.encode(`${JSON.stringify(payload)}\n`),
+              )
+            }
+
+            try {
+              if (body.claimFingerprint) {
+                await env.CONFIG.put(LAST_AUTO_KEY, body.claimFingerprint)
+              }
+
+              const token = await requireToken(env)
+              const config = await readConfig(env)
+              const domains = Array.from(
+                new Set(config.domains.map((d) => d.trim()).filter(Boolean)),
+              )
+              const { dayKey, day } = getTargetForDate(config)
+              const targetUrl = day.targetUrl.trim()
+
+              send({
+                type: 'start',
+                total: domains.length,
+                concurrency: APPLY_CONCURRENCY,
+                targetUrl,
+                dayKey,
+              })
+
+              if (!targetUrl) {
+                const summary = summarizeResults(config, [
+                  {
+                    domain: '(schedule)',
+                    status: 'failed',
+                    message: `No target URL set for ${day.label}.`,
+                  },
+                ])
+                await env.CONFIG.put(LAST_RUN_KEY, JSON.stringify(summary))
+                send({ type: 'done', summary })
+                return
+              }
+
+              if (domains.length === 0) {
+                const summary = summarizeResults(config, [])
+                await env.CONFIG.put(LAST_RUN_KEY, JSON.stringify(summary))
+                send({ type: 'done', summary })
+                return
+              }
+
+              const results = await mapPool(
+                domains,
+                APPLY_CONCURRENCY,
+                (domain) => applyOneDomain(token, config, domain),
+                (result, index, completed) => {
+                  send({
+                    type: 'result',
+                    index,
+                    completed,
+                    total: domains.length,
+                    concurrency: APPLY_CONCURRENCY,
+                    result,
+                  })
+                },
+              )
+
+              const summary = summarizeResults(config, results)
+              await env.CONFIG.put(LAST_RUN_KEY, JSON.stringify(summary))
+              if (body.claimFingerprint) {
+                await env.CONFIG.put(LAST_AUTO_KEY, body.claimFingerprint)
+              }
+              send({ type: 'done', summary })
+            } catch (error) {
+              if (body.claimFingerprint) {
+                const current = await env.CONFIG.get(LAST_AUTO_KEY)
+                if (current === body.claimFingerprint) {
+                  await env.CONFIG.delete(LAST_AUTO_KEY)
+                }
+              }
+              send({
+                type: 'error',
+                error: error instanceof Error ? error.message : String(error),
+              })
+            } finally {
+              controller.close()
+            }
+          },
+        })
+
+        return new Response(stream, {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/x-ndjson; charset=utf-8',
+            'Cache-Control': 'no-cache',
+            ...corsHeaders,
+          },
+        })
       }
 
       if (path === '/api/apply-finish' && request.method === 'POST') {
