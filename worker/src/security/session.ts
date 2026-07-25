@@ -129,6 +129,53 @@ export async function revokeSession(
   await kv.delete(sessionKey(sessionId))
 }
 
+export async function clearPresence(
+  kv: KVNamespace,
+  email: string,
+): Promise<void> {
+  const normalized = email.trim().toLowerCase()
+  if (!normalized) return
+  await kv.delete(presenceKey(normalized))
+}
+
+/** Revoke every active session for an email and clear online presence. */
+export async function revokeSessionsForEmail(
+  kv: KVNamespace,
+  email: string,
+): Promise<number> {
+  const normalized = email.trim().toLowerCase()
+  if (!normalized) return 0
+
+  let revoked = 0
+  let cursor: string | undefined
+  do {
+    const page = await kv.list({
+      prefix: 'session:',
+      cursor,
+      limit: 200,
+    })
+    const hits = await Promise.all(
+      page.keys.map(async (key) => {
+        const raw = await kv.get(key.name)
+        if (!raw) return 0
+        try {
+          const record = JSON.parse(raw) as SessionRecord
+          if (record.email?.trim().toLowerCase() !== normalized) return 0
+          await kv.delete(key.name)
+          return 1
+        } catch {
+          return 0
+        }
+      }),
+    )
+    revoked += hits.reduce<number>((sum, n) => sum + n, 0)
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
+
+  await clearPresence(kv, normalized)
+  return revoked
+}
+
 export async function loadSession(
   kv: KVNamespace,
   sessionId: string,

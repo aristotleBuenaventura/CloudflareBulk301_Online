@@ -1249,7 +1249,7 @@ a {
 
 .admin-stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
 }
 
@@ -1473,16 +1473,81 @@ a {
   align-items: center;
 }
 
-.role-badge {
-  font-size: 0.72rem;
-  font-weight: 650;
+.admin-account-meta .admin-meta-chip {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.65rem;
+  margin: 0;
+  padding: 0 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
   letter-spacing: 0.02em;
-  padding: 0.2rem 0.5rem;
+  line-height: 1;
+  white-space: nowrap;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.admin-account-meta .status-dot.is-live {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+
+.admin-account-meta .status-dot.is-warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+
+.admin-account-meta .status-dot.is-offline {
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+.admin-account-meta .role-badge {
+  color: var(--text);
+}
+
+.admin-account-meta .role-badge.role-superadmin {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.admin-force-logout-btn {
+  cursor: pointer;
+  color: var(--fail);
+  border-color: color-mix(in srgb, var(--fail) 40%, var(--line));
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.admin-force-logout-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fail) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--fail) 55%, var(--line));
+}
+
+.admin-force-logout-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.25rem 0.55rem;
   border-radius: 6px;
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--text);
   white-space: nowrap;
+  line-height: 1;
 }
 
 .role-badge.role-superadmin {

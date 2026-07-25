@@ -295,6 +295,22 @@ export async function setUserPassword(
   return next
 }
 
+/** Bump passwordVersion so existing cookies fail auth without changing the password. */
+export async function bumpSessionVersion(
+  kv: KVNamespace,
+  email: string,
+): Promise<UserRecord> {
+  const user = await getUser(kv, email)
+  if (!user) throw new Error('User not found.')
+  const next: UserRecord = {
+    ...user,
+    passwordVersion: (user.passwordVersion ?? 0) + 1,
+    updatedAt: new Date().toISOString(),
+  }
+  await putUser(kv, next)
+  return next
+}
+
 export async function deleteUser(
   kv: KVNamespace,
   email: string,

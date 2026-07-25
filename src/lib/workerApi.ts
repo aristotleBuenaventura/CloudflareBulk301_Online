@@ -244,6 +244,23 @@ export async function deleteAdminUser(
   if (!response.ok) throw new Error(await parseError(response))
 }
 
+export async function forceLogoutAdminUser(
+  session: WorkerSession,
+  email: string,
+): Promise<{ email: string; revoked: number }> {
+  const response = await apiFetch(
+    session.workerUrl,
+    `/api/admin/users/${encodeURIComponent(email)}/logout`,
+    { method: 'POST' },
+  )
+  if (!response.ok) throw new Error(await parseError(response))
+  const body = (await response.json()) as { email?: string; revoked?: number }
+  return {
+    email: body.email || email,
+    revoked: body.revoked ?? 0,
+  }
+}
+
 export async function forgotPassword(
   workerUrl: string,
   email: string,

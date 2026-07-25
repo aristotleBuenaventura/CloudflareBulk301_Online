@@ -3,6 +3,7 @@ import {
   createAdminUser,
   deleteAdminUser,
   fetchAuditLog,
+  forceLogoutAdminUser,
   listAdminUsers,
   resetAdminUserPassword,
   type AuditEvent,
@@ -57,6 +58,7 @@ function isLoginAction(action: string) {
     action.startsWith('2fa_') ||
     action === 'logout' ||
     action === 'session_idle_expired' ||
+    action === 'session_force_logout' ||
     action.startsWith('password_reset_')
   )
 }
@@ -97,6 +99,8 @@ function actionLabel(action: string) {
       return 'Logout'
     case 'session_idle_expired':
       return 'Session idle expired'
+    case 'session_force_logout':
+      return 'Force logout'
     case 'apply_run':
       return 'Redirect applied'
     case 'config_saved':
@@ -137,6 +141,7 @@ export function AdminDashboard({
   const [newPassword, setNewPassword] = useState('')
   const [busyEmail, setBusyEmail] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ManagedUser | null>(null)
+  const [logoutTarget, setLogoutTarget] = useState<ManagedUser | null>(null)
 
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
   const [auditLoading, setAuditLoading] = useState(true)
@@ -249,9 +254,32 @@ export function AdminDashboard({
     }
   }
 
+  async function onConfirmForceLogout() {
+    if (!logoutTarget) return
+    setBusyEmail(logoutTarget.email)
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await forceLogoutAdminUser(session, logoutTarget.email)
+      setNotice(
+        `Logged out ${result.email}${
+          result.revoked > 0 ? ` (${result.revoked} session${result.revoked === 1 ? '' : 's'})` : ''
+        }.`,
+      )
+      setLogoutTarget(null)
+      await Promise.all([
+        loadUsers({ quiet: true }),
+        loadAudit({ quiet: true }),
+      ])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to force logout')
+    } finally {
+      setBusyEmail(null)
+    }
+  }
+
   const adminCount = users.filter((u) => u.role === 'admin').length
   const superCount = users.filter((u) => u.role === 'superadmin').length
-  const totpCount = users.filter((u) => u.totpEnabled).length
   const onlineCount = users.filter((u) => u.online).length
   const sortedUsers = [...users].sort((a, b) => {
     if (Boolean(a.online) !== Boolean(b.online)) {
@@ -316,10 +344,6 @@ export function AdminDashboard({
           <div className="admin-stat section">
             <span className="admin-stat-label">Accounts</span>
             <strong>{users.length}</strong>
-          </div>
-          <div className="admin-stat section">
-            <span className="admin-stat-label">With 2FA</span>
-            <strong>{totpCount}</strong>
           </div>
           <div className="admin-stat section">
             <span className="admin-stat-label">Admins</span>
@@ -450,18 +474,30 @@ export function AdminDashboard({
                         </div>
                         <div className="admin-account-meta">
                           <span
-                            className={`status-dot ${account.online ? 'is-live' : 'is-offline'}`}
+                            className={`admin-meta-chip status-dot ${account.online ? 'is-live' : 'is-offline'}`}
                           >
                             {account.online ? 'Online' : 'Offline'}
                           </span>
-                          <span className={`role-badge role-${roleClass}`}>
+                          <span className={`admin-meta-chip role-badge role-${roleClass}`}>
                             {roleLabel(account.role)}
                           </span>
                           <span
-                            className={`status-dot ${account.totpEnabled ? 'is-live' : 'is-warn'}`}
+                            className={`admin-meta-chip status-dot ${account.totpEnabled ? 'is-live' : 'is-warn'}`}
                           >
                             {account.totpEnabled ? '2FA on' : '2FA pending'}
                           </span>
+                          {account.online &&
+                          !isSelf &&
+                          account.role !== 'superadmin' ? (
+                            <button
+                              type="button"
+                              className="admin-meta-chip admin-force-logout-btn"
+                              disabled={busyEmail === account.email}
+                              onClick={() => setLogoutTarget(account)}
+                            >
+                              Force logout
+                            </button>
+                          ) : null}
                         </div>
                       </div>
 
@@ -626,6 +662,40 @@ export function AdminDashboard({
       <footer className="app-footer">
         <span>Developed by Aris</span>
       </footer>
+
+      {logoutTarget ? (
+        <div className="admin-modal-backdrop" role="presentation">
+          <div
+            className="admin-modal section"
+            role="dialog"
+            aria-labelledby="logout-user-title"
+          >
+            <h3 id="logout-user-title">Force logout?</h3>
+            <p>
+              End all active sessions for{' '}
+              <strong>{logoutTarget.email}</strong>? They will need to sign in
+              again.
+            </p>
+            <div className="admin-modal-actions">
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setLogoutTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-btn"
+                disabled={busyEmail === logoutTarget.email}
+                onClick={() => void onConfirmForceLogout()}
+              >
+                Force logout
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {deleteTarget ? (
         <div className="admin-modal-backdrop" role="presentation">

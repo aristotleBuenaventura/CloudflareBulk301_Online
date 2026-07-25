@@ -15,6 +15,7 @@ export type AuditAction =
   | '2fa_disabled'
   | 'logout'
   | 'session_idle_expired'
+  | 'session_force_logout'
   | 'apply_run'
   | 'config_saved'
   | 'password_reset_requested'

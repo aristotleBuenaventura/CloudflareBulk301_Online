@@ -56,6 +56,7 @@ import {
   parseCookieValue,
   readCookie,
   revokeSession,
+  revokeSessionsForEmail,
   SESSION_TTL_MS,
   signCookieValue,
   touchSession,
@@ -69,6 +70,7 @@ import {
 import {
   assertStrongAdminSecret,
   assertStrongPassword,
+  bumpSessionVersion,
   countUsers,
   createUser,
   deleteUser,
@@ -1179,11 +1181,13 @@ export default {
               targetEmail,
               String(body.password || ''),
             )
+            await revokeSessionsForEmail(env.CONFIG, targetEmail)
             await appendAudit(
               env.CONFIG,
               request,
               'config_saved',
               `password-reset ${user.email} by ${auth.email}`,
+              { actor: auth.email },
             )
             return json(request, env, { ok: true, user: toPublicUser(user) })
           } catch (error) {
@@ -1198,6 +1202,53 @@ export default {
       }
 
       {
+        const logoutMatch = path.match(
+          /^\/api\/admin\/users\/([^/]+)\/logout$/,
+        )
+        if (logoutMatch && request.method === 'POST') {
+          const auth = await requireSuperadmin(request, env)
+          if (!auth.ok) return auth.response
+          const targetEmail = normalizeEmail(
+            decodeURIComponent(logoutMatch[1]!),
+          )
+          if (targetEmail === auth.email) {
+            return json(
+              request,
+              env,
+              { error: 'Use Sign out for your own session.' },
+              400,
+            )
+          }
+          const target = await getUser(env.CONFIG, targetEmail)
+          if (!target) {
+            return json(request, env, { error: 'User not found.' }, 404)
+          }
+          if (normalizeRole(target.role) === 'superadmin') {
+            return json(
+              request,
+              env,
+              { error: 'Cannot force-logout another superadmin.' },
+              403,
+            )
+          }
+          await bumpSessionVersion(env.CONFIG, targetEmail)
+          const revoked = await revokeSessionsForEmail(env.CONFIG, targetEmail)
+          await appendAudit(
+            env.CONFIG,
+            request,
+            'session_force_logout',
+            `force-logout ${targetEmail} sessions=${revoked} by ${auth.email}`,
+            { actor: auth.email },
+          )
+          return json(request, env, {
+            ok: true,
+            email: targetEmail,
+            revoked,
+          })
+        }
+      }
+
+      {
         const delMatch = path.match(/^\/api\/admin\/users\/([^/]+)$/)
         if (delMatch && request.method === 'DELETE') {
           const auth = await requireSuperadmin(request, env)
@@ -1207,12 +1258,14 @@ export default {
             return json(request, env, { error: 'Cannot delete your own account.' }, 400)
           }
           try {
+            await revokeSessionsForEmail(env.CONFIG, targetEmail)
             await deleteUser(env.CONFIG, targetEmail)
             await appendAudit(
               env.CONFIG,
               request,
               'logout',
               `deleted-user ${targetEmail} by ${auth.email}`,
+              { actor: auth.email },
             )
             return json(request, env, { ok: true })
           } catch (error) {
