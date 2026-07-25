@@ -1,0 +1,73 @@
+import { clientIp, clientUserAgent, randomId } from './crypto'
+
+export type AuditAction =
+  | 'login_success'
+  | 'login_failed'
+  | 'login_locked'
+  | 'login_rate_limited'
+  | 'login_ip_blocked'
+  | '2fa_required'
+  | '2fa_success'
+  | '2fa_failed'
+  | '2fa_setup_started'
+  | '2fa_enabled'
+  | '2fa_disabled'
+  | 'logout'
+  | 'session_idle_expired'
+  | 'apply_run'
+  | 'config_saved'
+
+export interface AuditEvent {
+  id: string
+  at: string
+  action: AuditAction
+  ip: string
+  userAgent: string
+  detail?: string
+}
+
+const AUDIT_KEY = 'security_audit'
+const MAX_EVENTS = 250
+
+export async function appendAudit(
+  kv: KVNamespace,
+  request: Request,
+  action: AuditAction,
+  detail?: string,
+): Promise<void> {
+  const event: AuditEvent = {
+    id: randomId(8),
+    at: new Date().toISOString(),
+    action,
+    ip: clientIp(request),
+    userAgent: clientUserAgent(request),
+    detail: detail?.slice(0, 500),
+  }
+
+  const raw = await kv.get(AUDIT_KEY)
+  let list: AuditEvent[] = []
+  if (raw) {
+    try {
+      list = JSON.parse(raw) as AuditEvent[]
+    } catch {
+      list = []
+    }
+  }
+  list.unshift(event)
+  if (list.length > MAX_EVENTS) list = list.slice(0, MAX_EVENTS)
+  await kv.put(AUDIT_KEY, JSON.stringify(list))
+}
+
+export async function readAudit(
+  kv: KVNamespace,
+  limit = 50,
+): Promise<AuditEvent[]> {
+  const raw = await kv.get(AUDIT_KEY)
+  if (!raw) return []
+  try {
+    const list = JSON.parse(raw) as AuditEvent[]
+    return list.slice(0, limit)
+  } catch {
+    return []
+  }
+}

@@ -1,5 +1,11 @@
-# Cloudflare API token — used ONLY by the Worker (never commit real values)
+# Cloudflare API token — Worker only (never commit real values).
+# Least privilege: Zone → Zone (Read), Page Rules (Edit), Single Redirect (Edit).
 CLOUDFLARE_API_TOKEN=
 
-# Password for the React admin UI → Worker API
+# Bootstrap only — create/reset users (not used for daily login).
 ADMIN_SECRET=change-me-to-a-long-random-string
+
+# Optional:
+# IP_ALLOWLIST=203.0.113.10
+# ALLOWED_ORIGINS=https://your-ui.example.com
+# COOKIE_SAMESITE=Lax

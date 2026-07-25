@@ -14,6 +14,52 @@ import {
   getTargetForDate,
   shouldRunScheduledApply,
 } from './schedule'
+import { appendAudit, readAudit } from './security/audit'
+import { timingSafeEqual } from './security/crypto'
+import {
+  cookieOptions,
+  corsHeadersFor,
+  parseAllowedOrigins,
+  securityHeaders,
+} from './security/headers'
+import {
+  assertLoginRateLimit,
+  assertNotLocked,
+  clearFailedLogins,
+  isIpAllowed,
+  parseIpAllowlist,
+  recordFailedLogin,
+} from './security/rateLimit'
+import {
+  buildSessionCookie,
+  clearSessionCookie,
+  consumeChallenge,
+  createChallenge,
+  createSession,
+  IDLE_TIMEOUT_MS,
+  loadSession,
+  parseCookieValue,
+  readCookie,
+  revokeSession,
+  SESSION_TTL_MS,
+  signCookieValue,
+  touchSession,
+  type SessionRecord,
+} from './security/session'
+import {
+  buildOtpauthUrl,
+  generateTotpSecret,
+  verifyTotpCode,
+} from './security/totp'
+import {
+  createUser,
+  getUser,
+  isValidEmail,
+  normalizeEmail,
+  putUser,
+  upsertUserPassword,
+  verifyPassword,
+} from './security/users'
 import {
   defaultConfig,
   normalizeApplyTime,
@@ -28,41 +74,125 @@ export interface Env {
   CLOUDFLARE_API_TOKEN: string
   ADMIN_SECRET: string
   TIMEZONE: string
+  ALLOWED_ORIGINS?: string
+  IP_ALLOWLIST?: string
+  COOKIE_SAMESITE?: string
 }
 
 const CONFIG_KEY = 'app_config'
 const LAST_RUN_KEY = 'last_run'
 const LAST_AUTO_KEY = 'last_auto_fingerprint'
 
-const corsHeaders: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Secret',
+type AuthOk = { ok: true; session: SessionRecord }
+type AuthFail = { ok: false; response: Response }
+
+function signingSecret(env: Env): string {
+  return env.ADMIN_SECRET
 }
 
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data, null, 2), {
+function withHeaders(
+  request: Request,
+  env: Env,
+  init: ResponseInit & { headers?: HeadersInit } = {},
+): ResponseInit {
+  const cors = corsHeadersFor(request, parseAllowedOrigins(env.ALLOWED_ORIGINS))
+  const base = { ...securityHeaders(), ...cors }
+  const extra =
+    init.headers instanceof Headers
+      ? Object.fromEntries(init.headers.entries())
+      : (init.headers as Record<string, string> | undefined) || {}
+  return { ...init, headers: { ...base, ...extra } }
+}
+
+function json(
+  request: Request,
+  env: Env,
+  data: unknown,
+  status = 200,
+  extraHeaders?: Record<string, string>,
+): Response {
+  return new Response(JSON.stringify(data, null, 2), withHeaders(request, env, {
     status,
     headers: {
       'Content-Type': 'application/json',
-      ...corsHeaders,
+      ...extraHeaders,
     },
-  })
+  }))
 }
 
-function unauthorized(): Response {
-  return json({ error: 'Unauthorized. Provide ADMIN_SECRET.' }, 401)
+function unauthorized(request: Request, env: Env, message?: string): Response {
+  return json(
+    request,
+    env,
+    { error: message || 'Unauthorized. Sign in required.' },
+    401,
+  )
 }
 
-function isAuthorized(request: Request, env: Env): boolean {
-  const expected = env.ADMIN_SECRET
-  if (!expected) return false
+async function requireSession(
+  request: Request,
+  env: Env,
+): Promise<AuthOk | AuthFail> {
+  const allowlist = parseIpAllowlist(env.IP_ALLOWLIST)
+  if (!isIpAllowed(request, allowlist)) {
+    await appendAudit(env.CONFIG, request, 'login_ip_blocked', 'session check')
+    return {
+      ok: false,
+      response: json(request, env, { error: 'IP not allowed.' }, 403),
+    }
+  }
 
-  const header =
-    request.headers.get('X-Admin-Secret') ||
-    request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '')
+  const raw = readCookie(request)
+  if (!raw) {
+    return { ok: false, response: unauthorized(request, env) }
+  }
+  const sessionId = await parseCookieValue(raw, signingSecret(env))
+  if (!sessionId) {
+    return { ok: false, response: unauthorized(request, env) }
+  }
+  const session = await loadSession(env.CONFIG, sessionId)
+  if (!session) {
+    return { ok: false, response: unauthorized(request, env) }
+  }
+  if (Date.now() - session.lastSeenAt > IDLE_TIMEOUT_MS) {
+    await revokeSession(env.CONFIG, session.id)
+    await appendAudit(env.CONFIG, request, 'session_idle_expired', session.id)
+    return {
+      ok: false,
+      response: unauthorized(
+        request,
+        env,
+        'Session expired due to inactivity. Sign in again.',
+      ),
+    }
+  }
+  await touchSession(env.CONFIG, session)
+  return { ok: true, session }
+}
 
-  return header === expected
+/** Full app access — session + completed 2FA. */
+async function requireAppAccess(
+  request: Request,
+  env: Env,
+): Promise<AuthOk | AuthFail> {
+  const auth = await requireSession(request, env)
+  if (!auth.ok) return auth
+  const user = await getUser(env.CONFIG, auth.session.email)
+  if (!user?.totpEnabled) {
+    return {
+      ok: false,
+      response: json(
+        request,
+        env,
+        {
+          error: '2FA setup required before using Bulk301.',
+          requires2faSetup: true,
+        },
+        403,
+      ),
+    }
+  }
+  return auth
 }
 
 async function readConfig(env: Env): Promise<AppConfig> {
@@ -98,18 +228,15 @@ function normalizeConfigInput(
     : current.schedule
   const domains = Array.isArray(body.domains)
     ? Array.from(
-        new Set(
-          body.domains
-            .map((d) => String(d).trim())
-            .filter(Boolean),
-        ),
+        new Set(body.domains.map((d) => String(d).trim()).filter(Boolean)),
       )
     : current.domains
 
   return {
     schedule,
     domains,
-    wildcard: typeof body.wildcard === 'boolean' ? body.wildcard : current.wildcard,
+    wildcard:
+      typeof body.wildcard === 'boolean' ? body.wildcard : current.wildcard,
     timezone: body.timezone?.trim() || current.timezone || fallbackTz,
     applyTime: normalizeApplyTime(
       body.applyTime !== undefined ? body.applyTime : current.applyTime,
@@ -129,17 +256,7 @@ async function requireToken(env: Env): Promise<string> {
   return token
 }
 
-async function checkDue(env: Env): Promise<{
-  due: boolean
-  ran: boolean
-  reason: string
-  clock: ReturnType<typeof formatPhilippineClock>
-  applyTime: string
-  fingerprint: string
-  targetUrl: string
-  dayKey: string
-  domains: string[]
-}> {
+async function checkDue(env: Env) {
   const config = await readConfig(env)
   const clock = formatPhilippineClock(new Date(), config.timezone)
   const lastAuto = await env.CONFIG.get(LAST_AUTO_KEY)
@@ -170,13 +287,7 @@ async function runApply(env: Env, at = new Date()): Promise<ApplyRunSummary> {
   return summary
 }
 
-async function maybeAutoApply(env: Env): Promise<{
-  ran: boolean
-  reason: string
-  clock: ReturnType<typeof formatPhilippineClock>
-  applyTime: string
-  summary?: ApplyRunSummary
-}> {
+async function maybeAutoApply(env: Env) {
   const due = await checkDue(env)
   if (!due.due) {
     return {
@@ -207,10 +318,53 @@ async function maybeAutoApply(env: Env): Promise<{
   }
 }
 
+async function issueSessionResponse(
+  request: Request,
+  env: Env,
+  email: string,
+  totpEnabled: boolean,
+  message?: string,
+): Promise<Response> {
+  const session = await createSession(env.CONFIG, request, email)
+  const value = await signCookieValue(session.id, signingSecret(env))
+  const cookieOpts = cookieOptions(request, env.COOKIE_SAMESITE)
+  return json(
+    request,
+    env,
+    {
+      ok: true,
+      authenticated: true,
+      email,
+      totpEnabled,
+      requires2faSetup: !totpEnabled,
+      message,
+    },
+    200,
+    {
+      'Set-Cookie': buildSessionCookie(value, {
+        ...cookieOpts,
+        maxAgeSec: Math.ceil(SESSION_TTL_MS / 1000),
+      }),
+    },
+  )
+}
+
+function adminSecretOk(env: Env, provided: string): boolean {
+  return Boolean(env.ADMIN_SECRET) && timingSafeEqual(provided, env.ADMIN_SECRET)
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders })
+      return new Response(
+        null,
+        withHeaders(request, env, { status: 204 }),
+      )
+    }
+
+    const contentLength = Number(request.headers.get('Content-Length') || 0)
+    if (contentLength > 512_000) {
+      return json(request, env, { error: 'Request body too large.' }, 413)
     }
 
     const url = new URL(request.url)
@@ -220,7 +374,7 @@ export default {
       if (path === '/' || path === '/api/health') {
         const config = await readConfig(env)
         const clock = formatPhilippineClock(new Date(), config.timezone)
-        return json({
+        return json(request, env, {
           ok: true,
           service: 'bulk301-scheduler',
           timezone: config.timezone,
@@ -228,7 +382,355 @@ export default {
           clock,
           hasToken: Boolean(env.CLOUDFLARE_API_TOKEN),
           hasAdminSecret: Boolean(env.ADMIN_SECRET),
+          auth: 'cookie-session',
         })
+      }
+
+      // ——— Auth ———
+      if (path === '/api/auth/register' && request.method === 'POST') {
+        const allowlist = parseIpAllowlist(env.IP_ALLOWLIST)
+        if (!isIpAllowed(request, allowlist)) {
+          return json(request, env, { error: 'IP not allowed.' }, 403)
+        }
+        const body = (await request.json().catch(() => ({}))) as {
+          email?: string
+          password?: string
+          adminSecret?: string
+        }
+        if (!adminSecretOk(env, String(body.adminSecret || ''))) {
+          await appendAudit(env.CONFIG, request, 'login_failed', 'register bad admin secret')
+          return json(request, env, { error: 'Invalid admin secret.' }, 401)
+        }
+        try {
+          const user = await createUser(
+            env.CONFIG,
+            String(body.email || ''),
+            String(body.password || ''),
+          )
+          await appendAudit(
+            env.CONFIG,
+            request,
+            'login_success',
+            `registered ${user.email}`,
+          )
+          return json(request, env, {
+            ok: true,
+            email: user.email,
+            totpEnabled: false,
+            requires2faSetup: true,
+            message: 'Account created. Sign in, then set up 2FA before using the app.',
+          })
+        } catch (error) {
+          return json(
+            request,
+            env,
+            { error: error instanceof Error ? error.message : String(error) },
+            400,
+          )
+        }
+      }
+
+      // Bootstrap / reset password for a user (requires ADMIN_SECRET).
+      if (path === '/api/auth/upsert-user' && request.method === 'POST') {
+        const body = (await request.json().catch(() => ({}))) as {
+          email?: string
+          password?: string
+          adminSecret?: string
+        }
+        if (!adminSecretOk(env, String(body.adminSecret || ''))) {
+          return json(request, env, { error: 'Invalid admin secret.' }, 401)
+        }
+        try {
+          const user = await upsertUserPassword(
+            env.CONFIG,
+            String(body.email || ''),
+            String(body.password || ''),
+          )
+          return json(request, env, {
+            ok: true,
+            email: user.email,
+            totpEnabled: user.totpEnabled,
+            requires2faSetup: !user.totpEnabled,
+          })
+        } catch (error) {
+          return json(
+            request,
+            env,
+            { error: error instanceof Error ? error.message : String(error) },
+            400,
+          )
+        }
+      }
+
+      if (path === '/api/auth/login' && request.method === 'POST') {
+        const allowlist = parseIpAllowlist(env.IP_ALLOWLIST)
+        if (!isIpAllowed(request, allowlist)) {
+          await appendAudit(env.CONFIG, request, 'login_ip_blocked')
+          return json(request, env, { error: 'IP not allowed.' }, 403)
+        }
+
+        const rate = await assertLoginRateLimit(env.CONFIG, request)
+        if (!rate.ok) {
+          await appendAudit(env.CONFIG, request, 'login_rate_limited')
+          return json(
+            request,
+            env,
+            {
+              error: `Too many login attempts. Try again in ${rate.retryAfterSec}s.`,
+            },
+            429,
+          )
+        }
+
+        const lock = await assertNotLocked(env.CONFIG)
+        if (!lock.ok) {
+          await appendAudit(env.CONFIG, request, 'login_locked')
+          return json(
+            request,
+            env,
+            {
+              error: `Account locked after failed attempts. Try again in ${lock.retryAfterSec}s.`,
+            },
+            423,
+          )
+        }
+
+        const body = (await request.json().catch(() => ({}))) as {
+          email?: string
+          password?: string
+        }
+        const email = normalizeEmail(String(body.email || ''))
+        const password = String(body.password || '')
+
+        if (!isValidEmail(email) || !password) {
+          return json(
+            request,
+            env,
+            { error: 'Email and password are required.' },
+            400,
+          )
+        }
+
+        const user = await getUser(env.CONFIG, email)
+        if (!user || !(await verifyPassword(password, user.passwordHash))) {
+          const state = await recordFailedLogin(env.CONFIG)
+          await appendAudit(
+            env.CONFIG,
+            request,
+            'login_failed',
+            `email=${email} failed=${state.failed}`,
+          )
+          if (state.lockedUntil) {
+            return json(
+              request,
+              env,
+              {
+                error: `Too many failed logins. Locked for ${LOCKOUT_HINT_MIN} minutes.`,
+              },
+              423,
+            )
+          }
+          return json(request, env, { error: 'Invalid credentials.' }, 401)
+        }
+
+        await clearFailedLogins(env.CONFIG)
+
+        if (user.totpEnabled && user.totpSecret) {
+          const challenge = await createChallenge(env.CONFIG, request, user.email)
+          await appendAudit(env.CONFIG, request, '2fa_required', user.email)
+          return json(request, env, {
+            ok: true,
+            requires2fa: true,
+            challengeToken: challenge.id,
+            email: user.email,
+          })
+        }
+
+        // New account: session allowed only to finish mandatory 2FA setup.
+        await appendAudit(
+          env.CONFIG,
+          request,
+          'login_success',
+          `${user.email} needs 2FA setup`,
+        )
+        return issueSessionResponse(request, env, user.email, false)
+      }
+
+      if (path === '/api/auth/2fa/verify' && request.method === 'POST') {
+        const body = (await request.json().catch(() => ({}))) as {
+          challengeToken?: string
+          code?: string
+        }
+        const challenge = await consumeChallenge(
+          env.CONFIG,
+          String(body.challengeToken || ''),
+        )
+        if (!challenge) {
+          return json(
+            request,
+            env,
+            { error: '2FA challenge expired. Sign in again.' },
+            401,
+          )
+        }
+        const user = await getUser(env.CONFIG, challenge.email)
+        if (!user?.totpEnabled || !user.totpSecret) {
+          return json(request, env, { error: '2FA is not enabled.' }, 400)
+        }
+        const ok = await verifyTotpCode(user.totpSecret, String(body.code || ''))
+        if (!ok) {
+          await appendAudit(env.CONFIG, request, '2fa_failed', challenge.email)
+          await recordFailedLogin(env.CONFIG)
+          return json(request, env, { error: 'Invalid authenticator code.' }, 401)
+        }
+        await clearFailedLogins(env.CONFIG)
+        await appendAudit(env.CONFIG, request, '2fa_success', user.email)
+        await appendAudit(env.CONFIG, request, 'login_success', `${user.email} via 2FA`)
+        return issueSessionResponse(request, env, user.email, true)
+      }
+
+      if (path === '/api/auth/logout' && request.method === 'POST') {
+        const raw = readCookie(request)
+        if (raw) {
+          const sessionId = await parseCookieValue(raw, signingSecret(env))
+          if (sessionId) await revokeSession(env.CONFIG, sessionId)
+        }
+        await appendAudit(env.CONFIG, request, 'logout')
+        const cookieOpts = cookieOptions(request, env.COOKIE_SAMESITE)
+        return json(
+          request,
+          env,
+          { ok: true },
+          200,
+          { 'Set-Cookie': clearSessionCookie(cookieOpts) },
+        )
+      }
+
+      if (path === '/api/auth/me' && request.method === 'GET') {
+        const auth = await requireSession(request, env)
+        if (!auth.ok) return auth.response
+        const user = await getUser(env.CONFIG, auth.session.email)
+        const totpEnabled = Boolean(user?.totpEnabled)
+        return json(request, env, {
+          ok: true,
+          authenticated: true,
+          email: auth.session.email,
+          totpEnabled,
+          requires2faSetup: !totpEnabled,
+          session: {
+            createdAt: new Date(auth.session.createdAt).toISOString(),
+            lastSeenAt: new Date(auth.session.lastSeenAt).toISOString(),
+          },
+        })
+      }
+
+      if (path === '/api/auth/2fa/setup/start' && request.method === 'POST') {
+        const auth = await requireSession(request, env)
+        if (!auth.ok) return auth.response
+        const user = await getUser(env.CONFIG, auth.session.email)
+        if (!user) {
+          return json(request, env, { error: 'User not found.' }, 404)
+        }
+        if (user.totpEnabled) {
+          return json(request, env, { error: '2FA is already enabled.' }, 400)
+        }
+        const secret = generateTotpSecret()
+        await putUser(env.CONFIG, {
+          ...user,
+          pendingTotpSecret: secret,
+          updatedAt: new Date().toISOString(),
+        })
+        await appendAudit(env.CONFIG, request, '2fa_setup_started', user.email)
+        return json(request, env, {
+          ok: true,
+          secret,
+          otpauthUrl: buildOtpauthUrl({ secret, label: user.email }),
+        })
+      }
+
+      if (path === '/api/auth/2fa/setup/confirm' && request.method === 'POST') {
+        const auth = await requireSession(request, env)
+        if (!auth.ok) return auth.response
+        const body = (await request.json().catch(() => ({}))) as {
+          code?: string
+        }
+        const user = await getUser(env.CONFIG, auth.session.email)
+        if (!user?.pendingTotpSecret) {
+          return json(
+            request,
+            env,
+            { error: 'No pending 2FA setup. Start setup again.' },
+            400,
+          )
+        }
+        const ok = await verifyTotpCode(
+          user.pendingTotpSecret,
+          String(body.code || ''),
+        )
+        if (!ok) {
+          return json(request, env, { error: 'Invalid authenticator code.' }, 400)
+        }
+        await putUser(env.CONFIG, {
+          ...user,
+          totpEnabled: true,
+          totpSecret: user.pendingTotpSecret,
+          pendingTotpSecret: null,
+          updatedAt: new Date().toISOString(),
+        })
+        await appendAudit(env.CONFIG, request, '2fa_enabled', user.email)
+        return json(request, env, {
+          ok: true,
+          totpEnabled: true,
+          requires2faSetup: false,
+        })
+      }
+
+      // 2FA cannot be fully turned off for accounts (mandatory). Recovery reset requires ADMIN_SECRET.
+      if (path === '/api/auth/2fa/reset' && request.method === 'POST') {
+        const auth = await requireSession(request, env)
+        if (!auth.ok) return auth.response
+        const body = (await request.json().catch(() => ({}))) as {
+          adminSecret?: string
+          code?: string
+        }
+        if (!adminSecretOk(env, String(body.adminSecret || ''))) {
+          return json(request, env, { error: 'Invalid admin secret.' }, 401)
+        }
+        const user = await getUser(env.CONFIG, auth.session.email)
+        if (!user) {
+          return json(request, env, { error: 'User not found.' }, 404)
+        }
+        if (user.totpEnabled && user.totpSecret) {
+          const ok = await verifyTotpCode(user.totpSecret, String(body.code || ''))
+          if (!ok) {
+            return json(
+              request,
+              env,
+              { error: 'Invalid authenticator code.' },
+              401,
+            )
+          }
+        }
+        await putUser(env.CONFIG, {
+          ...user,
+          totpEnabled: false,
+          totpSecret: null,
+          pendingTotpSecret: null,
+          updatedAt: new Date().toISOString(),
+        })
+        await appendAudit(env.CONFIG, request, '2fa_disabled', user.email)
+        return json(request, env, {
+          ok: true,
+          totpEnabled: false,
+          requires2faSetup: true,
+        })
+      }
+
+      if (path === '/api/audit' && request.method === 'GET') {
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
+        const events = await readAudit(env.CONFIG, 80)
+        return json(request, env, { ok: true, events })
       }
 
       if (path === '/api/clock' && request.method === 'GET') {
@@ -236,7 +738,7 @@ export default {
         const clock = formatPhilippineClock(new Date(), config.timezone)
         const lastAuto = await env.CONFIG.get(LAST_AUTO_KEY)
         const check = shouldRunScheduledApply(config, lastAuto)
-        return json({
+        return json(request, env, {
           clock,
           applyTime: config.applyTime,
           due: check.run,
@@ -247,7 +749,8 @@ export default {
       }
 
       if (path === '/api/config' && request.method === 'GET') {
-        if (!isAuthorized(request, env)) return unauthorized()
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         const config = await readConfig(env)
         const { dayKey, day } = getTargetForDate(config)
         const lastRunRaw = await env.CONFIG.get(LAST_RUN_KEY)
@@ -255,16 +758,20 @@ export default {
           ? (JSON.parse(lastRunRaw) as ApplyRunSummary)
           : null
         const clock = formatPhilippineClock(new Date(), config.timezone)
-        return json({
+        const user = await getUser(env.CONFIG, auth.session.email)
+        return json(request, env, {
           config,
           today: { dayKey, targetUrl: day.targetUrl },
           lastRun,
           clock,
+          email: auth.session.email,
+          totpEnabled: Boolean(user?.totpEnabled),
         })
       }
 
       if (path === '/api/config' && request.method === 'PUT') {
-        if (!isAuthorized(request, env)) return unauthorized()
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         const current = await readConfig(env)
         const body = (await request.json()) as Partial<AppConfig>
         const next = normalizeConfigInput(
@@ -273,29 +780,34 @@ export default {
           env.TIMEZONE || 'Asia/Manila',
         )
         await writeConfig(env, next)
-        // Saving targets/time must NEVER start a 301 run. Marker stays so
-        // catch-up cannot fire; schedule only runs at exact applyTime.
-        return json({ ok: true, config: next })
+        await appendAudit(
+          env.CONFIG,
+          request,
+          'config_saved',
+          `domains=${next.domains.length} time=${next.applyTime}`,
+        )
+        return json(request, env, { ok: true, config: next })
       }
 
       if (path === '/api/reset-auto' && request.method === 'POST') {
-        if (!isAuthorized(request, env)) return unauthorized()
-        // Soft reset for debugging only — does not apply redirects.
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         await env.CONFIG.delete(LAST_AUTO_KEY)
         await env.CONFIG.delete('last_auto_date')
         const due = await checkDue(env)
-        return json({ ok: true, reset: true, ...due })
+        return json(request, env, { ok: true, reset: true, ...due })
       }
 
       if (path === '/api/claim-auto' && request.method === 'POST') {
-        if (!isAuthorized(request, env)) return unauthorized()
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         const body = (await request.json().catch(() => ({}))) as {
           fingerprint?: string
         }
         const due = await checkDue(env)
         const fingerprint = body.fingerprint || due.fingerprint
         await env.CONFIG.put(LAST_AUTO_KEY, fingerprint)
-        return json({
+        return json(request, env, {
           ok: true,
           claimed: true,
           fingerprint,
@@ -309,20 +821,21 @@ export default {
       }
 
       if (path === '/api/apply-one' && request.method === 'POST') {
-        if (!isAuthorized(request, env)) return unauthorized()
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         const body = (await request.json()) as { domain?: string }
         if (!body.domain?.trim()) {
-          return json({ error: 'domain is required' }, 400)
+          return json(request, env, { error: 'domain is required' }, 400)
         }
         const token = await requireToken(env)
         const config = await readConfig(env)
         const result = await applyOneDomain(token, config, body.domain)
-        return json({ ok: true, result })
+        return json(request, env, { ok: true, result })
       }
 
-      // Apply every saved domain concurrently (same-time batches on the Worker).
       if (path === '/api/apply-all' && request.method === 'POST') {
-        if (!isAuthorized(request, env)) return unauthorized()
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         const body = (await request.json().catch(() => ({}))) as {
           claimFingerprint?: string
         }
@@ -331,7 +844,13 @@ export default {
         }
         try {
           const summary = await runApply(env)
-          return json({ ok: true, summary, parallel: true })
+          await appendAudit(
+            env.CONFIG,
+            request,
+            'apply_run',
+            `${summary.dayKey} → ${summary.targetUrl} ok=${summary.success} fail=${summary.failed}`,
+          )
+          return json(request, env, { ok: true, summary, parallel: true })
         } catch (error) {
           if (body.claimFingerprint) {
             const current = await env.CONFIG.get(LAST_AUTO_KEY)
@@ -343,12 +862,9 @@ export default {
         }
       }
 
-      /**
-       * Single HTTP connection; Worker runs APPLY_CONCURRENCY (25) Cloudflare
-       * calls in parallel and streams NDJSON progress (avoids browser 6-conn limit).
-       */
       if (path === '/api/apply-stream' && request.method === 'POST') {
-        if (!isAuthorized(request, env)) return unauthorized()
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         const body = (await request.json().catch(() => ({}))) as {
           claimFingerprint?: string
         }
@@ -424,6 +940,12 @@ export default {
               if (body.claimFingerprint) {
                 await env.CONFIG.put(LAST_AUTO_KEY, body.claimFingerprint)
               }
+              await appendAudit(
+                env.CONFIG,
+                request,
+                'apply_run',
+                `${summary.dayKey} → ${summary.targetUrl} ok=${summary.success} fail=${summary.failed}`,
+              )
               send({ type: 'done', summary })
             } catch (error) {
               if (body.claimFingerprint) {
@@ -442,18 +964,21 @@ export default {
           },
         })
 
-        return new Response(stream, {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/x-ndjson; charset=utf-8',
-            'Cache-Control': 'no-cache',
-            ...corsHeaders,
-          },
-        })
+        return new Response(
+          stream,
+          withHeaders(request, env, {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/x-ndjson; charset=utf-8',
+              'Cache-Control': 'no-cache',
+            },
+          }),
+        )
       }
 
       if (path === '/api/apply-finish' && request.method === 'POST') {
-        if (!isAuthorized(request, env)) return unauthorized()
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         const body = (await request.json()) as {
           results?: DomainResult[]
           claimFingerprint?: string
@@ -465,43 +990,58 @@ export default {
         if (body.claimFingerprint) {
           await env.CONFIG.put(LAST_AUTO_KEY, body.claimFingerprint)
         }
-        return json({ ok: true, summary })
+        await appendAudit(
+          env.CONFIG,
+          request,
+          'apply_run',
+          `${summary.dayKey} → ${summary.targetUrl}`,
+        )
+        return json(request, env, { ok: true, summary })
       }
 
       if (path === '/api/apply' && request.method === 'POST') {
-        if (!isAuthorized(request, env)) return unauthorized()
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         const summary = await runApply(env)
-        return json({ ok: true, summary })
+        await appendAudit(
+          env.CONFIG,
+          request,
+          'apply_run',
+          `${summary.dayKey} → ${summary.targetUrl}`,
+        )
+        return json(request, env, { ok: true, summary })
       }
 
-      // UI uses checkOnly so the browser can show live per-domain progress.
-      // Cron (scheduled) still uses full maybeAutoApply.
       if (path === '/api/tick' && request.method === 'POST') {
-        if (!isAuthorized(request, env)) return unauthorized()
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         const body = (await request.json().catch(() => ({}))) as {
           checkOnly?: boolean
         }
         if (body.checkOnly !== false) {
           const due = await checkDue(env)
-          return json({ ok: true, ...due })
+          return json(request, env, { ok: true, ...due })
         }
         const result = await maybeAutoApply(env)
-        return json({ ok: true, ...result })
+        return json(request, env, { ok: true, ...result })
       }
 
       if (path === '/api/last-run' && request.method === 'GET') {
-        if (!isAuthorized(request, env)) return unauthorized()
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         const lastRunRaw = await env.CONFIG.get(LAST_RUN_KEY)
-        return json({
+        return json(request, env, {
           lastRun: lastRunRaw
             ? (JSON.parse(lastRunRaw) as ApplyRunSummary)
             : null,
         })
       }
 
-      return json({ error: 'Not found' }, 404)
+      return json(request, env, { error: 'Not found' }, 404)
     } catch (error) {
       return json(
+        request,
+        env,
         {
           error: error instanceof Error ? error.message : String(error),
         },
@@ -535,3 +1075,5 @@ export default {
     )
   },
 }
+
+const LOCKOUT_HINT_MIN = 15

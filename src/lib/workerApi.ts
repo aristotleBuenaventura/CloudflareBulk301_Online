@@ -6,14 +6,17 @@ import type {
 } from '../types'
 
 export interface WorkerSession {
+  /** Empty string = same-origin (Vite proxy / co-hosted). */
   workerUrl: string
-  adminSecret: string
+  email?: string
 }
 
 export interface ConfigResponse {
   config: AppConfig
   today: { dayKey: string; targetUrl: string }
   lastRun: ApplyRunSummary | null
+  totpEnabled?: boolean
+  email?: string
 }
 
 export interface DueCheckResponse {
@@ -36,14 +39,29 @@ export interface DueCheckResponse {
   reset?: boolean
 }
 
-function authHeaders(secret: string): HeadersInit {
-  return {
-    'Content-Type': 'application/json',
-    'X-Admin-Secret': secret,
-  }
+export interface LoginResult {
+  requires2fa: boolean
+  requires2faSetup?: boolean
+  challengeToken?: string
+  totpEnabled?: boolean
+  email?: string
+}
+
+export interface AuditEvent {
+  id: string
+  at: string
+  action: string
+  ip: string
+  userAgent: string
+  detail?: string
+}
+
+const jsonHeaders: HeadersInit = {
+  'Content-Type': 'application/json',
 }
 
 function joinUrl(base: string, path: string): string {
+  if (!base) return path
   return `${base.replace(/\/+$/, '')}${path}`
 }
 
@@ -57,15 +75,137 @@ async function parseError(response: Response): Promise<string> {
   return `Request failed (HTTP ${response.status})`
 }
 
-export async function loginToWorker(
+async function apiFetch(
   workerUrl: string,
-  adminSecret: string,
-): Promise<ConfigResponse> {
-  const response = await fetch(joinUrl(workerUrl, '/api/config'), {
-    headers: authHeaders(adminSecret),
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  return fetch(joinUrl(workerUrl, path), {
+    ...init,
+    credentials: 'include',
+    headers: {
+      ...jsonHeaders,
+      ...(init.headers || {}),
+    },
+  })
+}
+
+export async function loginWithCredentials(
+  workerUrl: string,
+  email: string,
+  password: string,
+): Promise<LoginResult> {
+  const response = await apiFetch(workerUrl, '/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
   })
   if (!response.ok) throw new Error(await parseError(response))
+  const body = (await response.json()) as {
+    requires2fa?: boolean
+    requires2faSetup?: boolean
+    challengeToken?: string
+    totpEnabled?: boolean
+    email?: string
+  }
+  return {
+    requires2fa: Boolean(body.requires2fa),
+    requires2faSetup: Boolean(body.requires2faSetup),
+    challengeToken: body.challengeToken,
+    totpEnabled: body.totpEnabled,
+    email: body.email,
+  }
+}
+
+export async function verify2fa(
+  workerUrl: string,
+  challengeToken: string,
+  code: string,
+): Promise<LoginResult> {
+  const response = await apiFetch(workerUrl, '/api/auth/2fa/verify', {
+    method: 'POST',
+    body: JSON.stringify({ challengeToken, code }),
+  })
+  if (!response.ok) throw new Error(await parseError(response))
+  const body = (await response.json()) as {
+    totpEnabled?: boolean
+    email?: string
+    requires2faSetup?: boolean
+  }
+  return {
+    requires2fa: false,
+    totpEnabled: Boolean(body.totpEnabled),
+    requires2faSetup: Boolean(body.requires2faSetup),
+    email: body.email,
+  }
+}
+
+export async function logoutWorker(session: WorkerSession): Promise<void> {
+  await apiFetch(session.workerUrl, '/api/auth/logout', { method: 'POST' })
+}
+
+export async function fetchSessionMe(workerUrl: string): Promise<{
+  authenticated: boolean
+  totpEnabled: boolean
+  requires2faSetup: boolean
+  email: string
+} | null> {
+  const response = await apiFetch(workerUrl, '/api/auth/me')
+  if (response.status === 401) return null
+  if (!response.ok) throw new Error(await parseError(response))
+  const body = (await response.json()) as {
+    authenticated?: boolean
+    totpEnabled?: boolean
+    requires2faSetup?: boolean
+    email?: string
+  }
+  return {
+    authenticated: Boolean(body.authenticated),
+    totpEnabled: Boolean(body.totpEnabled),
+    requires2faSetup: Boolean(body.requires2faSetup),
+    email: body.email || '',
+  }
+}
+
+export async function fetchConfig(
+  session: WorkerSession,
+): Promise<ConfigResponse> {
+  const response = await apiFetch(session.workerUrl, '/api/config')
+  if (!response.ok) throw new Error(await parseError(response))
   return (await response.json()) as ConfigResponse
+}
+
+export async function start2faSetup(
+  session: WorkerSession,
+): Promise<{ secret: string; otpauthUrl: string }> {
+  const response = await apiFetch(session.workerUrl, '/api/auth/2fa/setup/start', {
+    method: 'POST',
+  })
+  if (!response.ok) throw new Error(await parseError(response))
+  return (await response.json()) as { secret: string; otpauthUrl: string }
+}
+
+export async function confirm2faSetup(
+  session: WorkerSession,
+  code: string,
+): Promise<void> {
+  const response = await apiFetch(
+    session.workerUrl,
+    '/api/auth/2fa/setup/confirm',
+    {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    },
+  )
+  if (!response.ok) throw new Error(await parseError(response))
+}
+
+export async function fetchAuditLog(
+  session: WorkerSession,
+): Promise<AuditEvent[]> {
+  const response = await apiFetch(session.workerUrl, '/api/audit')
+  if (!response.ok) throw new Error(await parseError(response))
+  const body = (await response.json()) as { events: AuditEvent[] }
+  return body.events || []
 }
 
 export async function saveConfig(
@@ -78,9 +218,8 @@ export async function saveConfig(
     applyTime?: string
   },
 ): Promise<AppConfig> {
-  const response = await fetch(joinUrl(session.workerUrl, '/api/config'), {
+  const response = await apiFetch(session.workerUrl, '/api/config', {
     method: 'PUT',
-    headers: authHeaders(session.adminSecret),
     body: JSON.stringify(config),
   })
   if (!response.ok) throw new Error(await parseError(response))
@@ -88,96 +227,17 @@ export async function saveConfig(
   return body.config
 }
 
-/** Check-only: does not apply. Used so the UI can show live progress. */
 export async function tickSchedule(
   session: WorkerSession,
 ): Promise<DueCheckResponse> {
-  const response = await fetch(joinUrl(session.workerUrl, '/api/tick'), {
+  const response = await apiFetch(session.workerUrl, '/api/tick', {
     method: 'POST',
-    headers: authHeaders(session.adminSecret),
     body: JSON.stringify({ checkOnly: true }),
   })
   if (!response.ok) throw new Error(await parseError(response))
   return (await response.json()) as DueCheckResponse
 }
 
-/** Clears auto marker, then returns due check (no bulk apply). */
-export async function resetAutoAndTick(
-  session: WorkerSession,
-): Promise<DueCheckResponse> {
-  const response = await fetch(joinUrl(session.workerUrl, '/api/reset-auto'), {
-    method: 'POST',
-    headers: authHeaders(session.adminSecret),
-  })
-  if (!response.ok) throw new Error(await parseError(response))
-  return (await response.json()) as DueCheckResponse
-}
-
-export async function claimAuto(
-  session: WorkerSession,
-  fingerprint: string,
-): Promise<DueCheckResponse & { claimed: boolean }> {
-  const response = await fetch(joinUrl(session.workerUrl, '/api/claim-auto'), {
-    method: 'POST',
-    headers: authHeaders(session.adminSecret),
-    body: JSON.stringify({ fingerprint }),
-  })
-  if (!response.ok) throw new Error(await parseError(response))
-  return (await response.json()) as DueCheckResponse & { claimed: boolean }
-}
-
-export async function applyOneDomain(
-  session: WorkerSession,
-  domain: string,
-): Promise<DomainResult> {
-  const response = await fetch(joinUrl(session.workerUrl, '/api/apply-one'), {
-    method: 'POST',
-    headers: authHeaders(session.adminSecret),
-    body: JSON.stringify({ domain }),
-  })
-  if (!response.ok) throw new Error(await parseError(response))
-  const body = (await response.json()) as { result: DomainResult }
-  return body.result
-}
-
-export async function finishApply(
-  session: WorkerSession,
-  results: DomainResult[],
-  claimFingerprint?: string,
-): Promise<ApplyRunSummary> {
-  const response = await fetch(joinUrl(session.workerUrl, '/api/apply-finish'), {
-    method: 'POST',
-    headers: authHeaders(session.adminSecret),
-    body: JSON.stringify({ results, claimFingerprint }),
-  })
-  if (!response.ok) throw new Error(await parseError(response))
-  const body = (await response.json()) as { summary: ApplyRunSummary }
-  return body.summary
-}
-
-export type ApplyStreamEvent =
-  | {
-      type: 'start'
-      total: number
-      concurrency: number
-      targetUrl: string
-      dayKey: string
-    }
-  | {
-      type: 'result'
-      index: number
-      completed: number
-      total: number
-      concurrency: number
-      result: DomainResult
-    }
-  | { type: 'done'; summary: ApplyRunSummary }
-  | { type: 'error'; error: string }
-
-/**
- * One browser connection; Worker runs ~25 Cloudflare applies in parallel and
- * streams NDJSON progress (bypasses the ~6 connections/host browser limit).
- */
 export async function applyStream(
   session: WorkerSession,
   opts: {
@@ -186,9 +246,8 @@ export async function applyStream(
     onEvent: (event: ApplyStreamEvent) => void
   },
 ): Promise<ApplyRunSummary> {
-  const response = await fetch(joinUrl(session.workerUrl, '/api/apply-stream'), {
+  const response = await apiFetch(session.workerUrl, '/api/apply-stream', {
     method: 'POST',
-    headers: authHeaders(session.adminSecret),
     body: JSON.stringify({ claimFingerprint: opts.claimFingerprint }),
   })
 
@@ -228,5 +287,24 @@ export async function applyStream(
   if (!summary) throw new Error('Apply stream ended without a summary.')
   return summary
 }
+
+export type ApplyStreamEvent =
+  | {
+      type: 'start'
+      total: number
+      concurrency: number
+      targetUrl: string
+      dayKey: string
+    }
+  | {
+      type: 'result'
+      index: number
+      completed: number
+      total: number
+      concurrency: number
+      result: DomainResult
+    }
+  | { type: 'done'; summary: ApplyRunSummary }
+  | { type: 'error'; error: string }
 
 export const UI_APPLY_CONCURRENCY = 25

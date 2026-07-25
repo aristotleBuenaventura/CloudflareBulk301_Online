@@ -15,7 +15,16 @@ preview_id = "00000000000000000000000000000001"
 
 [vars]
 TIMEZONE = "Asia/Manila"
+# ALLOWED_ORIGINS = "https://your-ui.example.com"
+# IP_ALLOWLIST = "203.0.113.10"
+# COOKIE_SAMESITE = "Lax"
 
 # Secrets (set via CLI — never commit):
 #   npx wrangler secret put CLOUDFLARE_API_TOKEN
 #   npx wrangler secret put ADMIN_SECRET
+#
+# Token least privilege (recommended):
+#   Zone → Zone: Read
+#   Zone → Page Rules: Edit
+#   Zone → Single Redirect: Edit
+#   Zone resources: only zones you manage (not Account Administrator)

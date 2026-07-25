@@ -6,6 +6,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
+      // Same-origin `/api` → Worker so HttpOnly cookies work in local dev
+      '/api': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: true,
+      },
       '/cf': {
         target: 'https://api.cloudflare.com/client/v4',
         changeOrigin: true,

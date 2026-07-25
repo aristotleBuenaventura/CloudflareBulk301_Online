@@ -7,18 +7,18 @@ Each weekday has its own target domain. The Worker applies redirects on a schedu
 ## Architecture
 
 ```
-React UI  --admin secret-->  Worker API  --CF token secret-->  Cloudflare Zones
-                                   ^
-                                   |
-                              Cron (daily)
+    React UI  --HttpOnly cookie-->  Worker API  --CF token secret-->  Cloudflare Zones
+         |                                 ^
+      2FA / audit                          |
+                                      Cron (daily)
 ```
 
 | Piece | Role |
 |---|---|
-| React app | Edit weekly schedule + old domains, Save, Apply now |
-| Worker | Stores config in KV, runs Cron, calls Cloudflare API |
-| `CLOUDFLARE_API_TOKEN` | Worker secret only — you set it locally |
-| `ADMIN_SECRET` | Protects the admin UI ↔ Worker API |
+| React app | Schedule + domains UI (no secrets in localStorage) |
+| Worker | Cookie sessions, 2FA, rate limit, KV config, Cron, CF API |
+| `CLOUDFLARE_API_TOKEN` | Worker secret only — least-privilege zone redirects |
+| `ADMIN_SECRET` | Bootstrap only — create/reset users & 2FA recovery (not daily login) |
 
 ## 1. Worker setup (you do the secrets)
 
@@ -60,19 +60,56 @@ From repo root:
 ```bash
 npm install
 cp .env.example .env
+# Leave VITE_WORKER_URL empty so `/api` is proxied to the local Worker (cookie auth)
 npm run dev
 # → http://localhost:5173
 ```
 
 Login with:
-- **Worker URL:** `http://127.0.0.1:8787`
-- **Admin secret:** same as `ADMIN_SECRET` in `.dev.vars`
+- **Email** + **password**
+- New accounts must **set up 2FA** before schedule/301 unlocks
+
+`ADMIN_SECRET` is **not** for daily login — only for creating/resetting users (API):
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/auth/upsert-user \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"your-strong-password","adminSecret":"YOUR_ADMIN_SECRET"}'
+```
 
 Then:
-1. Edit Mon–Sun target domains  
-2. Upload / paste old domains  
-3. **Save to Worker**  
-4. **Apply now** (optional test) — Cron will also run daily  
+1. Sign in → complete **mandatory 2FA**
+2. Edit Mon–Sun target domains  
+3. Upload / paste old domains  
+4. **Save settings**  
+5. 301s run on schedule only  
+
+## Security (live hardening)
+
+| Control | How |
+|---|---|
+| HttpOnly cookie session | No admin secret in `localStorage`; cookie signed + idle timeout 30m |
+| Strong password | Long random `ADMIN_SECRET` |
+| 2FA (TOTP) | Security panel → authenticator app |
+| Rate limit + lockout | 20 attempts / 15m per IP; lock after 5 failed logins |
+| IP allowlist | Optional `IP_ALLOWLIST` in Worker vars |
+| Audit log | Security panel (logins, 2FA, applies, config saves) |
+| Secure headers | CSP, nosniff, frame deny, referrer policy |
+| CF token least privilege | Zone Read + Page Rules Edit + Single Redirect Edit only |
+
+Production CORS (UI host ≠ Worker host):
+
+```toml
+# worker/wrangler.toml [vars]
+ALLOWED_ORIGINS = "https://your-ui.example.com"
+COOKIE_SAMESITE = "None"
+```
+
+Optional IP gate:
+
+```toml
+IP_ALLOWLIST = "203.0.113.10,198.51.100.20"
+```
 
 ## 3. Deploy Worker (livesite automation)
 
@@ -83,7 +120,7 @@ npx wrangler secret put ADMIN_SECRET
 npm run deploy
 ```
 
-Point the UI at the Worker URL:
+Point the UI at the Worker URL (only if UI is not same-origin):
 
 ```env
 VITE_WORKER_URL=https://bulk301-scheduler.<your-subdomain>.workers.dev
@@ -107,7 +144,7 @@ Default: `00:00` in `Asia/Manila`.
 | Zone → Page Rules | Edit |
 | Zone → Single Redirect | Edit |
 
-Zone resources: **All zones** (or the zones you need).
+Zone resources: **only the zones you need** — not Account Administrator.
 
 ## Default weekly schedule
 

@@ -5,13 +5,18 @@ import { LoginScreen } from './components/LoginScreen'
 import { PhilTimeClock } from './components/PhilTimeClock'
 import { ResultsPanel } from './components/ResultsPanel'
 import { ScheduleEditor } from './components/ScheduleEditor'
+import { SecurityPanel } from './components/SecurityPanel'
 import { ThemeToggle } from './components/ThemeToggle'
 import {
   applyStream,
-  loginToWorker,
+  fetchConfig,
+  fetchSessionMe,
+  loginWithCredentials,
+  logoutWorker,
   saveConfig,
   tickSchedule,
   UI_APPLY_CONCURRENCY,
+  verify2fa,
   type DueCheckResponse,
   type WorkerSession,
 } from './lib/workerApi'
@@ -24,15 +29,19 @@ import {
 } from './types'
 import './App.css'
 
-const DEFAULT_WORKER_URL =
-  import.meta.env.VITE_WORKER_URL?.replace(/\/+$/, '') || 'http://127.0.0.1:8787'
+/** Blank = same-origin via Vite `/api` proxy. Set VITE_WORKER_URL only if UI ≠ Worker host. */
+const WORKER_URL =
+  import.meta.env.VITE_WORKER_URL?.replace(/\/+$/, '') ?? ''
 
 const TICK_INTERVAL_MS = 10_000
 
 export default function App() {
   const [session, setSession] = useState<WorkerSession | null>(null)
+  const [totpEnabled, setTotpEnabled] = useState(false)
   const [loginError, setLoginError] = useState<string | null>(null)
   const [loginLoading, setLoginLoading] = useState(false)
+  const [challengeToken, setChallengeToken] = useState<string | null>(null)
+  const [booting, setBooting] = useState(true)
 
   const [schedule, setSchedule] = useState<DaySchedule[]>(DEFAULT_SCHEDULE)
   const [domains, setDomains] = useState<string[]>([])
@@ -66,6 +75,53 @@ export default function App() {
   payloadRef.current = { schedule, domains, wildcard, timezone, applyTime }
 
   const highlightDate = useMemo(() => new Date(), [])
+
+  const applyConfigToState = useCallback(
+    (data: Awaited<ReturnType<typeof fetchConfig>>) => {
+      setSchedule(
+        data.config.schedule?.length ? data.config.schedule : DEFAULT_SCHEDULE,
+      )
+      setDomains(data.config.domains ?? [])
+      setWildcard(data.config.wildcard ?? true)
+      setTimezone(data.config.timezone || 'Asia/Manila')
+      setApplyTime(data.config.applyTime || '00:00')
+      setTodayTarget(data.today?.targetUrl ?? '')
+      setLastRun(data.lastRun)
+      setResults(data.lastRun?.results ?? [])
+      setTotpEnabled(Boolean(data.totpEnabled))
+      setDirty(false)
+      setStatusMessage(null)
+      setScheduleStatus(null)
+    },
+    [],
+  )
+
+  // Restore cookie session on load (no secrets in localStorage).
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const me = await fetchSessionMe(WORKER_URL)
+        if (cancelled) return
+        if (me?.authenticated) {
+          setSession({ workerUrl: WORKER_URL, email: me.email })
+          setTotpEnabled(me.totpEnabled)
+          if (me.totpEnabled) {
+            const data = await fetchConfig({ workerUrl: WORKER_URL })
+            if (cancelled) return
+            applyConfigToState(data)
+          }
+        }
+      } catch {
+        /* not signed in */
+      } finally {
+        if (!cancelled) setBooting(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [applyConfigToState])
 
   const runLiveApply = useCallback(
     async (
@@ -117,8 +173,7 @@ export default function App() {
               return
             }
             if (event.type === 'result') {
-              const idx =
-                domainIndex.get(event.result.domain) ?? event.index
+              const idx = domainIndex.get(event.result.domain) ?? event.index
               nextResults[idx] = event.result
               setResults([...nextResults])
               setProgress({
@@ -180,26 +235,34 @@ export default function App() {
     [runLiveApply],
   )
 
+  const enterApp = useCallback(
+    async (email?: string) => {
+      const me = await fetchSessionMe(WORKER_URL)
+      if (!me?.authenticated) {
+        throw new Error('Session missing after login.')
+      }
+      setSession({ workerUrl: WORKER_URL, email: email || me.email })
+      setTotpEnabled(me.totpEnabled)
+      setChallengeToken(null)
+      if (me.totpEnabled) {
+        const data = await fetchConfig({ workerUrl: WORKER_URL })
+        applyConfigToState(data)
+      }
+    },
+    [applyConfigToState],
+  )
+
   const handleLogin = useCallback(
-    async (workerUrl: string, adminSecret: string) => {
+    async (email: string, password: string) => {
       setLoginLoading(true)
       setLoginError(null)
       try {
-        const data = await loginToWorker(workerUrl, adminSecret)
-        setSession({ workerUrl, adminSecret })
-        setSchedule(
-          data.config.schedule?.length ? data.config.schedule : DEFAULT_SCHEDULE,
-        )
-        setDomains(data.config.domains ?? [])
-        setWildcard(data.config.wildcard ?? true)
-        setTimezone(data.config.timezone || 'Asia/Manila')
-        setApplyTime(data.config.applyTime || '00:00')
-        setTodayTarget(data.today?.targetUrl ?? '')
-        setLastRun(data.lastRun)
-        setResults(data.lastRun?.results ?? [])
-        setDirty(false)
-        setStatusMessage(null)
-        setScheduleStatus(null)
+        const result = await loginWithCredentials(WORKER_URL, email, password)
+        if (result.requires2fa && result.challengeToken) {
+          setChallengeToken(result.challengeToken)
+          return false
+        }
+        await enterApp(result.email || email)
         return true
       } catch (error) {
         setLoginError(error instanceof Error ? error.message : String(error))
@@ -208,11 +271,37 @@ export default function App() {
         setLoginLoading(false)
       }
     },
-    [],
+    [enterApp],
   )
 
-  const logout = useCallback(() => {
+  const handleVerify2fa = useCallback(
+    async (token: string, code: string) => {
+      setLoginLoading(true)
+      setLoginError(null)
+      try {
+        const result = await verify2fa(WORKER_URL, token, code)
+        await enterApp(result.email)
+        return true
+      } catch (error) {
+        setLoginError(error instanceof Error ? error.message : String(error))
+        return false
+      } finally {
+        setLoginLoading(false)
+      }
+    },
+    [enterApp],
+  )
+
+  const logout = useCallback(async () => {
+    if (session) {
+      try {
+        await logoutWorker(session)
+      } catch {
+        /* ignore */
+      }
+    }
     setSession(null)
+    setTotpEnabled(false)
     setResults([])
     setLastRun(null)
     setStatusMessage(null)
@@ -220,7 +309,8 @@ export default function App() {
     setDirty(false)
     setProgress(null)
     setLiveRun(false)
-  }, [])
+    setChallengeToken(null)
+  }, [session])
 
   const updateSchedule = useCallback((key: DayKey, targetUrl: string) => {
     setSchedule((prev) =>
@@ -234,7 +324,6 @@ export default function App() {
     setDirty(true)
   }, [])
 
-  /** Save config only — never triggers 301. */
   const handleSave = useCallback(async () => {
     if (!session || savingRef.current) return
     savingRef.current = true
@@ -266,16 +355,19 @@ export default function App() {
       const due = await tickSchedule(session)
       setScheduleStatus(due.reason)
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : String(error))
+      const msg = error instanceof Error ? error.message : String(error)
+      setStatusMessage(msg)
+      if (/unauthorized|sign in|expired/i.test(msg)) {
+        setSession(null)
+      }
     } finally {
       savingRef.current = false
       setSaving(false)
     }
   }, [session])
 
-  // Schedule watcher only — 301 runs when Philippine time is due.
   useEffect(() => {
-    if (!session || dirty) return
+    if (!session || dirty || !totpEnabled) return
 
     let cancelled = false
 
@@ -291,9 +383,11 @@ export default function App() {
         }
       } catch (error) {
         if (!cancelled) {
-          setScheduleStatus(
-            error instanceof Error ? error.message : String(error),
-          )
+          const msg = error instanceof Error ? error.message : String(error)
+          setScheduleStatus(msg)
+          if (/unauthorized|sign in|expired/i.test(msg)) {
+            setSession(null)
+          }
         }
       }
     }
@@ -304,20 +398,74 @@ export default function App() {
       cancelled = true
       window.clearInterval(id)
     }
-  }, [session, dirty, applyTime, timezone, maybeStartDueApply])
+  }, [session, dirty, applyTime, timezone, maybeStartDueApply, totpEnabled])
+
+  if (booting) {
+    return (
+      <div className="login-page">
+        <div className="login-atmosphere" aria-hidden="true" />
+        <p className="login-lede" style={{ position: 'relative', zIndex: 1 }}>
+          Checking session…
+        </p>
+      </div>
+    )
+  }
 
   if (!session) {
     return (
       <LoginScreen
         onLogin={handleLogin}
+        onVerify2fa={handleVerify2fa}
         error={loginError}
         loading={loginLoading}
-        defaultWorkerUrl={DEFAULT_WORKER_URL}
+        challengeToken={challengeToken}
       />
     )
   }
 
   const runState = applying ? 'running' : dirty ? 'dirty' : 'idle'
+
+  if (!totpEnabled) {
+    return (
+      <div className="app-shell is-dirty">
+        <div className="app-atmosphere" aria-hidden="true" />
+        <header className="command-bar">
+          <div className="command-brand">
+            <p className="brand-mark">Bulk301</p>
+            <span className="run-pill is-dirty">2FA required</span>
+          </div>
+          <div className="command-actions">
+            <span className="worker-chip">{session.email}</span>
+            <ThemeToggle compact />
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => void logout()}
+            >
+              Sign out
+            </button>
+          </div>
+        </header>
+        <main className="workspace" style={{ maxWidth: 560 }}>
+          <SecurityPanel
+            session={session}
+            totpEnabled={false}
+            mandatorySetup
+            onTotpChange={async (enabled) => {
+              setTotpEnabled(enabled)
+              if (enabled) {
+                const data = await fetchConfig(session)
+                applyConfigToState(data)
+              }
+            }}
+          />
+        </main>
+        <footer className="app-footer">
+          <span>Developed by Aris</span>
+        </footer>
+      </div>
+    )
+  }
 
   return (
     <div className={`app-shell is-${runState}`}>
@@ -326,10 +474,7 @@ export default function App() {
       <header className="command-bar">
         <div className="command-brand">
           <p className="brand-mark">Bulk301</p>
-          <span
-            className={`run-pill is-${runState}`}
-            title={session.workerUrl}
-          >
+          <span className={`run-pill is-${runState}`} title={session.email}>
             {applying ? 'Applying 301s' : dirty ? 'Unsaved' : 'Armed'}
           </span>
         </div>
@@ -343,11 +488,15 @@ export default function App() {
         />
 
         <div className="command-actions">
-          <span className="worker-chip" title={session.workerUrl}>
-            {session.workerUrl.replace(/^https?:\/\//, '')}
+          <span className="worker-chip" title={session.email}>
+            {session.email}
           </span>
           <ThemeToggle compact />
-          <button type="button" className="ghost-btn" onClick={logout}>
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={() => void logout()}
+          >
             Sign out
           </button>
         </div>
@@ -394,6 +543,12 @@ export default function App() {
           domains={domains}
           onChange={handleDomainsChange}
           disabled={applying || saving}
+        />
+
+        <SecurityPanel
+          session={session}
+          totpEnabled={totpEnabled}
+          onTotpChange={setTotpEnabled}
         />
 
         <ResultsPanel
