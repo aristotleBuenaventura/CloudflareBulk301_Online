@@ -1,11 +1,22 @@
 import { randomId, timingSafeEqual } from './crypto'
 
+export type UserRole = 'superadmin' | 'admin'
+
 export interface UserRecord {
   email: string
   passwordHash: string
+  role: UserRole
   totpEnabled: boolean
   totpSecret: string | null
   pendingTotpSecret: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PublicUser {
+  email: string
+  role: UserRole
+  totpEnabled: boolean
   createdAt: string
   updatedAt: string
 }
@@ -24,6 +35,10 @@ export function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email))
 }
 
+export function normalizeRole(role: unknown): UserRole {
+  return role === 'superadmin' ? 'superadmin' : 'admin'
+}
+
 function bufferToHex(buf: ArrayBuffer | Uint8Array): string {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -37,7 +52,6 @@ function hexToBytes(hex: string): Uint8Array {
   return out
 }
 
-/** Stored format: pbkdf2$iterations$saltHex$hashHex */
 export async function hashPassword(password: string): Promise<string> {
   const iterations = 200_000
   const salt = new Uint8Array(16)
@@ -91,6 +105,13 @@ export async function verifyPassword(
   return timingSafeEqual(bufferToHex(bits), expected)
 }
 
+function hydrateUser(raw: UserRecord): UserRecord {
+  return {
+    ...raw,
+    role: normalizeRole(raw.role),
+  }
+}
+
 export async function getUser(
   kv: KVNamespace,
   email: string,
@@ -98,7 +119,7 @@ export async function getUser(
   const raw = await kv.get(userKey(email))
   if (!raw) return null
   try {
-    return JSON.parse(raw) as UserRecord
+    return hydrateUser(JSON.parse(raw) as UserRecord)
   } catch {
     return null
   }
@@ -124,8 +145,40 @@ async function addToUsersIndex(kv: KVNamespace, email: string): Promise<void> {
   }
 }
 
+async function removeFromUsersIndex(
+  kv: KVNamespace,
+  email: string,
+): Promise<void> {
+  const normalized = normalizeEmail(email)
+  const list = (await readUsersIndex(kv)).filter((e) => e !== normalized)
+  await kv.put(USERS_INDEX_KEY, JSON.stringify(list))
+}
+
 export async function countUsers(kv: KVNamespace): Promise<number> {
   return (await readUsersIndex(kv)).length
+}
+
+export async function listUsers(kv: KVNamespace): Promise<PublicUser[]> {
+  const emails = await readUsersIndex(kv)
+  const users: PublicUser[] = []
+  for (const email of emails) {
+    const user = await getUser(kv, email)
+    if (!user) continue
+    users.push({
+      email: user.email,
+      role: user.role,
+      totpEnabled: user.totpEnabled,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    })
+  }
+  users.sort((a, b) => {
+    if (a.role !== b.role) {
+      return a.role === 'superadmin' ? -1 : 1
+    }
+    return a.email.localeCompare(b.email)
+  })
+  return users
 }
 
 export function assertStrongPassword(password: string): void {
@@ -148,15 +201,27 @@ export function assertStrongAdminSecret(secret: string): void {
   }
 }
 
+export function toPublicUser(user: UserRecord): PublicUser {
+  return {
+    email: user.email,
+    role: user.role,
+    totpEnabled: user.totpEnabled,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  }
+}
+
 export async function putUser(kv: KVNamespace, user: UserRecord): Promise<void> {
-  await kv.put(userKey(user.email), JSON.stringify(user))
-  await addToUsersIndex(kv, user.email)
+  const next = hydrateUser(user)
+  await kv.put(userKey(next.email), JSON.stringify(next))
+  await addToUsersIndex(kv, next.email)
 }
 
 export async function createUser(
   kv: KVNamespace,
   email: string,
   password: string,
+  role: UserRole = 'admin',
 ): Promise<UserRecord> {
   const normalized = normalizeEmail(email)
   if (!isValidEmail(normalized)) {
@@ -171,6 +236,7 @@ export async function createUser(
   const user: UserRecord = {
     email: normalized,
     passwordHash: await hashPassword(password),
+    role: normalizeRole(role),
     totpEnabled: false,
     totpSecret: null,
     pendingTotpSecret: null,
@@ -185,6 +251,7 @@ export async function upsertUserPassword(
   kv: KVNamespace,
   email: string,
   password: string,
+  role?: UserRole,
 ): Promise<UserRecord> {
   const normalized = normalizeEmail(email)
   assertStrongPassword(password)
@@ -193,12 +260,43 @@ export async function upsertUserPassword(
     const next: UserRecord = {
       ...existing,
       passwordHash: await hashPassword(password),
+      role: role ? normalizeRole(role) : existing.role,
       updatedAt: new Date().toISOString(),
     }
     await putUser(kv, next)
     return next
   }
-  return createUser(kv, normalized, password)
+  return createUser(kv, normalized, password, role ?? 'admin')
+}
+
+export async function setUserPassword(
+  kv: KVNamespace,
+  email: string,
+  password: string,
+): Promise<UserRecord> {
+  const user = await getUser(kv, email)
+  if (!user) throw new Error('User not found.')
+  assertStrongPassword(password)
+  const next: UserRecord = {
+    ...user,
+    passwordHash: await hashPassword(password),
+    updatedAt: new Date().toISOString(),
+  }
+  await putUser(kv, next)
+  return next
+}
+
+export async function deleteUser(
+  kv: KVNamespace,
+  email: string,
+): Promise<void> {
+  const user = await getUser(kv, email)
+  if (!user) throw new Error('User not found.')
+  if (user.role === 'superadmin') {
+    throw new Error('Cannot delete a superadmin account.')
+  }
+  await kv.delete(userKey(user.email))
+  await removeFromUsersIndex(kv, user.email)
 }
 
 export async function ensureUserIndexed(
@@ -206,4 +304,8 @@ export async function ensureUserIndexed(
   email: string,
 ): Promise<void> {
   await addToUsersIndex(kv, email)
+}
+
+export function newPendingId(): string {
+  return randomId(8)
 }

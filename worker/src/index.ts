@@ -59,13 +59,19 @@ import {
   assertStrongAdminSecret,
   countUsers,
   createUser,
+  deleteUser,
   ensureUserIndexed,
   getUser,
   isValidEmail,
+  listUsers,
   normalizeEmail,
+  normalizeRole,
   putUser,
+  setUserPassword,
+  toPublicUser,
   upsertUserPassword,
   verifyPassword,
+  type UserRole,
 } from './security/users'
 import {
   defaultConfig,
@@ -204,7 +210,7 @@ async function requireSession(
   return { ok: true, session }
 }
 
-/** Full app access — session + completed 2FA. */
+/** Operator app access — session + completed 2FA. Superadmin is user-mgmt only. */
 async function requireAppAccess(
   request: Request,
   env: Env,
@@ -226,7 +232,59 @@ async function requireAppAccess(
       ),
     }
   }
+  if (normalizeRole(user.role) === 'superadmin') {
+    return {
+      ok: false,
+      response: json(
+        request,
+        env,
+        {
+          error:
+            'Superadmin accounts are limited to user management and cannot use Bulk301.',
+        },
+        403,
+      ),
+    }
+  }
   return auth
+}
+
+
+type AuthUserOk = { ok: true; session: SessionRecord; role: UserRole; email: string }
+
+async function requireSuperadmin(
+  request: Request,
+  env: Env,
+): Promise<AuthUserOk | AuthFail> {
+  const auth = await requireSession(request, env)
+  if (!auth.ok) return auth
+  const user = await getUser(env.CONFIG, auth.session.email)
+  if (!user?.totpEnabled) {
+    return {
+      ok: false,
+      response: json(
+        request,
+        env,
+        {
+          error: '2FA setup required before using the admin dashboard.',
+          requires2faSetup: true,
+        },
+        403,
+      ),
+    }
+  }
+  if (normalizeRole(user.role) !== 'superadmin') {
+    return {
+      ok: false,
+      response: json(request, env, { error: 'Superadmin access required.' }, 403),
+    }
+  }
+  return {
+    ok: true,
+    session: auth.session,
+    role: 'superadmin',
+    email: user.email,
+  }
 }
 
 async function readConfig(env: Env): Promise<AppConfig> {
@@ -453,6 +511,7 @@ export default {
           email?: string
           password?: string
           adminSecret?: string
+          role?: string
         }
         const adminSecret = String(body.adminSecret || '')
         if (!adminSecretOk(env, adminSecret)) {
@@ -474,14 +533,14 @@ export default {
 
         const users = await countUsers(env.CONFIG)
         if (users > 0) {
-          const auth = await requireAppAccess(request, env)
+          const auth = await requireSuperadmin(request, env)
           if (!auth.ok) {
             return json(
               request,
               env,
               {
                 error:
-                  'Creating additional users requires an authenticated admin session (2FA) plus ADMIN_SECRET.',
+                  'Creating or updating users requires a superadmin session (2FA) plus ADMIN_SECRET.',
               },
               401,
             )
@@ -504,20 +563,40 @@ export default {
         }
 
         try {
+          const requestedRole = body.role
+            ? normalizeRole(body.role)
+            : users === 0
+              ? 'superadmin'
+              : undefined
+          // First account defaults to superadmin; later upserts keep/set role explicitly.
+          const role: UserRole | undefined =
+            requestedRole === 'superadmin' || requestedRole === 'admin'
+              ? requestedRole
+              : undefined
+          if (users > 0 && role === 'superadmin') {
+            return json(
+              request,
+              env,
+              { error: 'Cannot promote to superadmin via upsert after bootstrap.' },
+              400,
+            )
+          }
           const user = await upsertUserPassword(
             env.CONFIG,
             String(body.email || ''),
             String(body.password || ''),
+            role,
           )
           await appendAudit(
             env.CONFIG,
             request,
             'login_success',
-            `upsert-user ${user.email}`,
+            `upsert-user ${user.email} role=${user.role}`,
           )
           return json(request, env, {
             ok: true,
             email: user.email,
+            role: user.role,
             totpEnabled: user.totpEnabled,
             requires2faSetup: !user.totpEnabled,
           })
@@ -685,6 +764,7 @@ export default {
           ok: true,
           authenticated: true,
           email: auth.session.email,
+          role: user ? normalizeRole(user.role) : 'admin',
           totpEnabled,
           requires2faSetup: !totpEnabled,
           session: {
@@ -794,6 +874,133 @@ export default {
           totpEnabled: false,
           requires2faSetup: true,
         })
+      }
+
+
+      // ——— Superadmin user management ———
+      if (path === '/api/admin/users' && request.method === 'GET') {
+        const auth = await requireSuperadmin(request, env)
+        if (!auth.ok) return auth.response
+        const users = await listUsers(env.CONFIG)
+        return json(request, env, { ok: true, users })
+      }
+
+      if (path === '/api/admin/users' && request.method === 'POST') {
+        const auth = await requireSuperadmin(request, env)
+        if (!auth.ok) return auth.response
+        const body = (await request.json().catch(() => ({}))) as {
+          email?: string
+          password?: string
+          role?: string
+        }
+        const role = normalizeRole(body.role || 'admin')
+        if (role === 'superadmin') {
+          return json(
+            request,
+            env,
+            { error: 'Cannot create another superadmin from the dashboard.' },
+            400,
+          )
+        }
+        try {
+          const user = await createUser(
+            env.CONFIG,
+            String(body.email || ''),
+            String(body.password || ''),
+            'admin',
+          )
+          await appendAudit(
+            env.CONFIG,
+            request,
+            'login_success',
+            `admin-created ${user.email} by ${auth.email}`,
+          )
+          return json(request, env, { ok: true, user: toPublicUser(user) })
+        } catch (error) {
+          return json(
+            request,
+            env,
+            { error: error instanceof Error ? error.message : String(error) },
+            400,
+          )
+        }
+      }
+
+      {
+        const passMatch = path.match(/^\/api\/admin\/users\/([^/]+)\/password$/)
+        if (passMatch && request.method === 'POST') {
+          const auth = await requireSuperadmin(request, env)
+          if (!auth.ok) return auth.response
+          const targetEmail = normalizeEmail(decodeURIComponent(passMatch[1]!))
+          const target = await getUser(env.CONFIG, targetEmail)
+          if (!target) {
+            return json(request, env, { error: 'User not found.' }, 404)
+          }
+          if (
+            target.role === 'superadmin' &&
+            target.email !== auth.email
+          ) {
+            return json(
+              request,
+              env,
+              { error: 'Cannot change another superadmin password.' },
+              403,
+            )
+          }
+          const body = (await request.json().catch(() => ({}))) as {
+            password?: string
+          }
+          try {
+            const user = await setUserPassword(
+              env.CONFIG,
+              targetEmail,
+              String(body.password || ''),
+            )
+            await appendAudit(
+              env.CONFIG,
+              request,
+              'config_saved',
+              `password-reset ${user.email} by ${auth.email}`,
+            )
+            return json(request, env, { ok: true, user: toPublicUser(user) })
+          } catch (error) {
+            return json(
+              request,
+              env,
+              { error: error instanceof Error ? error.message : String(error) },
+              400,
+            )
+          }
+        }
+      }
+
+      {
+        const delMatch = path.match(/^\/api\/admin\/users\/([^/]+)$/)
+        if (delMatch && request.method === 'DELETE') {
+          const auth = await requireSuperadmin(request, env)
+          if (!auth.ok) return auth.response
+          const targetEmail = normalizeEmail(decodeURIComponent(delMatch[1]!))
+          if (targetEmail === auth.email) {
+            return json(request, env, { error: 'Cannot delete your own account.' }, 400)
+          }
+          try {
+            await deleteUser(env.CONFIG, targetEmail)
+            await appendAudit(
+              env.CONFIG,
+              request,
+              'logout',
+              `deleted-user ${targetEmail} by ${auth.email}`,
+            )
+            return json(request, env, { ok: true })
+          } catch (error) {
+            return json(
+              request,
+              env,
+              { error: error instanceof Error ? error.message : String(error) },
+              400,
+            )
+          }
+        }
       }
 
       if (path === '/api/audit' && request.method === 'GET') {

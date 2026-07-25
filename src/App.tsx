@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AdminDashboard } from './components/AdminDashboard'
 import { ApplyControls } from './components/ApplyControls'
 import { DomainUploader } from './components/DomainUploader'
 import { LoginScreen } from './components/LoginScreen'
@@ -18,6 +19,7 @@ import {
   UI_APPLY_CONCURRENCY,
   verify2fa,
   type DueCheckResponse,
+  type UserRole,
   type WorkerSession,
 } from './lib/workerApi'
 import {
@@ -37,6 +39,7 @@ const TICK_INTERVAL_MS = 10_000
 
 export default function App() {
   const [session, setSession] = useState<WorkerSession | null>(null)
+  const [role, setRole] = useState<UserRole>('admin')
   const [totpEnabled, setTotpEnabled] = useState(false)
   const [loginError, setLoginError] = useState<string | null>(null)
   const [loginLoading, setLoginLoading] = useState(false)
@@ -104,9 +107,14 @@ export default function App() {
         const me = await fetchSessionMe(WORKER_URL)
         if (cancelled) return
         if (me?.authenticated) {
-          setSession({ workerUrl: WORKER_URL, email: me.email })
+          setSession({
+            workerUrl: WORKER_URL,
+            email: me.email,
+            role: me.role,
+          })
+          setRole(me.role)
           setTotpEnabled(me.totpEnabled)
-          if (me.totpEnabled) {
+          if (me.totpEnabled && me.role !== 'superadmin') {
             const data = await fetchConfig({ workerUrl: WORKER_URL })
             if (cancelled) return
             applyConfigToState(data)
@@ -241,10 +249,15 @@ export default function App() {
       if (!me?.authenticated) {
         throw new Error('Session missing after login.')
       }
-      setSession({ workerUrl: WORKER_URL, email: email || me.email })
+      setSession({
+        workerUrl: WORKER_URL,
+        email: email || me.email,
+        role: me.role,
+      })
+      setRole(me.role)
       setTotpEnabled(me.totpEnabled)
       setChallengeToken(null)
-      if (me.totpEnabled) {
+      if (me.totpEnabled && me.role !== 'superadmin') {
         const data = await fetchConfig({ workerUrl: WORKER_URL })
         applyConfigToState(data)
       }
@@ -301,6 +314,7 @@ export default function App() {
       }
     }
     setSession(null)
+    setRole('admin')
     setTotpEnabled(false)
     setResults([])
     setLastRun(null)
@@ -367,7 +381,7 @@ export default function App() {
   }, [session])
 
   useEffect(() => {
-    if (!session || dirty || !totpEnabled) return
+    if (!session || dirty || !totpEnabled || role === 'superadmin') return
 
     let cancelled = false
 
@@ -398,7 +412,7 @@ export default function App() {
       cancelled = true
       window.clearInterval(id)
     }
-  }, [session, dirty, applyTime, timezone, maybeStartDueApply, totpEnabled])
+  }, [session, dirty, applyTime, timezone, maybeStartDueApply, totpEnabled, role])
 
   if (booting) {
     return (
@@ -453,7 +467,7 @@ export default function App() {
             mandatorySetup
             onTotpChange={async (enabled) => {
               setTotpEnabled(enabled)
-              if (enabled) {
+              if (enabled && role !== 'superadmin') {
                 const data = await fetchConfig(session)
                 applyConfigToState(data)
               }
@@ -465,6 +479,10 @@ export default function App() {
         </footer>
       </div>
     )
+  }
+
+  if (role === 'superadmin') {
+    return <AdminDashboard session={session} onLogout={logout} />
   }
 
   return (

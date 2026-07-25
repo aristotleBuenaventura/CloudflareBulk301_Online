@@ -5,10 +5,21 @@ import type {
   DomainResult,
 } from '../types'
 
+export type UserRole = 'superadmin' | 'admin'
+
 export interface WorkerSession {
   /** Empty string = same-origin (Vite proxy / co-hosted). */
   workerUrl: string
   email?: string
+  role?: UserRole
+}
+
+export interface ManagedUser {
+  email: string
+  role: UserRole
+  totpEnabled: boolean
+  createdAt: string
+  updatedAt: string
 }
 
 export interface ConfigResponse {
@@ -148,6 +159,7 @@ export async function fetchSessionMe(workerUrl: string): Promise<{
   totpEnabled: boolean
   requires2faSetup: boolean
   email: string
+  role: UserRole
 } | null> {
   const response = await apiFetch(workerUrl, '/api/auth/me')
   if (response.status === 401) return null
@@ -157,13 +169,67 @@ export async function fetchSessionMe(workerUrl: string): Promise<{
     totpEnabled?: boolean
     requires2faSetup?: boolean
     email?: string
+    role?: string
   }
   return {
     authenticated: Boolean(body.authenticated),
     totpEnabled: Boolean(body.totpEnabled),
     requires2faSetup: Boolean(body.requires2faSetup),
     email: body.email || '',
+    role: body.role === 'superadmin' ? 'superadmin' : 'admin',
   }
+}
+
+export async function listAdminUsers(
+  session: WorkerSession,
+): Promise<ManagedUser[]> {
+  const response = await apiFetch(session.workerUrl, '/api/admin/users')
+  if (!response.ok) throw new Error(await parseError(response))
+  const body = (await response.json()) as { users?: ManagedUser[] }
+  return body.users || []
+}
+
+export async function createAdminUser(
+  session: WorkerSession,
+  input: { email: string; password: string },
+): Promise<ManagedUser> {
+  const response = await apiFetch(session.workerUrl, '/api/admin/users', {
+    method: 'POST',
+    body: JSON.stringify({ ...input, role: 'admin' }),
+  })
+  if (!response.ok) throw new Error(await parseError(response))
+  const body = (await response.json()) as { user: ManagedUser }
+  return body.user
+}
+
+export async function resetAdminUserPassword(
+  session: WorkerSession,
+  email: string,
+  password: string,
+): Promise<ManagedUser> {
+  const response = await apiFetch(
+    session.workerUrl,
+    `/api/admin/users/${encodeURIComponent(email)}/password`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    },
+  )
+  if (!response.ok) throw new Error(await parseError(response))
+  const body = (await response.json()) as { user: ManagedUser }
+  return body.user
+}
+
+export async function deleteAdminUser(
+  session: WorkerSession,
+  email: string,
+): Promise<void> {
+  const response = await apiFetch(
+    session.workerUrl,
+    `/api/admin/users/${encodeURIComponent(email)}`,
+    { method: 'DELETE' },
+  )
+  if (!response.ok) throw new Error(await parseError(response))
 }
 
 export async function fetchConfig(

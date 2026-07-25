@@ -1,0 +1,413 @@
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import {
+  createAdminUser,
+  deleteAdminUser,
+  listAdminUsers,
+  resetAdminUserPassword,
+  type ManagedUser,
+  type WorkerSession,
+} from '../lib/workerApi'
+import { ThemeToggle } from './ThemeToggle'
+
+interface AdminDashboardProps {
+  session: WorkerSession
+  onLogout: () => void | Promise<void>
+}
+
+function formatWhen(value: string) {
+  try {
+    return new Date(value).toLocaleString()
+  } catch {
+    return value
+  }
+}
+
+function roleLabel(role: string) {
+  return role === 'superadmin' ? 'Superadmin' : 'Admin'
+}
+
+function initials(email: string) {
+  const parts = email.split(/[\s@._-]+/).filter(Boolean)
+  if (parts.length >= 2) {
+    return `${parts[0]![0] ?? ''}${parts[1]![0] ?? ''}`.toUpperCase()
+  }
+  return email.slice(0, 2).toUpperCase() || '?'
+}
+
+export function AdminDashboard({
+  session,
+  onLogout,
+}: AdminDashboardProps) {
+  const [users, setUsers] = useState<ManagedUser[]>([])
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [passwordEmail, setPasswordEmail] = useState<string | null>(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [busyEmail, setBusyEmail] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<ManagedUser | null>(null)
+
+  const loadUsers = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setRefreshing(true)
+    try {
+      const list = await listAdminUsers(session)
+      setUsers(list)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load accounts')
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }, [session])
+
+  useEffect(() => {
+    void loadUsers()
+    const timer = window.setInterval(() => {
+      void loadUsers({ quiet: true })
+    }, 15_000)
+    return () => window.clearInterval(timer)
+  }, [loadUsers])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(null), 4500)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
+  async function onCreate(event: FormEvent) {
+    event.preventDefault()
+    setCreating(true)
+    setNotice(null)
+    setError(null)
+    try {
+      await createAdminUser(session, {
+        email: email.trim(),
+        password,
+      })
+      setEmail('')
+      setPassword('')
+      setNotice('Created admin account.')
+      await loadUsers({ quiet: true })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create account')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function onChangePassword(targetEmail: string) {
+    if (newPassword.length < 12) {
+      setError('Password must be at least 12 characters.')
+      return
+    }
+    setBusyEmail(targetEmail)
+    setError(null)
+    setNotice(null)
+    try {
+      await resetAdminUserPassword(session, targetEmail, newPassword)
+      setPasswordEmail(null)
+      setNewPassword('')
+      setNotice(`Password updated for ${targetEmail}.`)
+      await loadUsers({ quiet: true })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to change password')
+    } finally {
+      setBusyEmail(null)
+    }
+  }
+
+  async function onConfirmDelete() {
+    if (!deleteTarget) return
+    setBusyEmail(deleteTarget.email)
+    setError(null)
+    setNotice(null)
+    try {
+      await deleteAdminUser(session, deleteTarget.email)
+      setNotice(`Deleted ${deleteTarget.email}.`)
+      setDeleteTarget(null)
+      await loadUsers({ quiet: true })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete account')
+    } finally {
+      setBusyEmail(null)
+    }
+  }
+
+  const adminCount = users.filter((u) => u.role === 'admin').length
+  const superCount = users.filter((u) => u.role === 'superadmin').length
+  const totpCount = users.filter((u) => u.totpEnabled).length
+
+  return (
+    <div className="app-shell admin-shell">
+      <div className="app-atmosphere" aria-hidden="true" />
+
+      <header className="command-bar">
+        <div className="command-brand">
+          <p className="brand-mark">Bulk301</p>
+          <span className="run-pill">Admin</span>
+        </div>
+
+        <div className="admin-bar-lede">
+          <strong>Admin Dashboard</strong>
+          <span>User management only</span>
+        </div>
+
+        <div className="command-actions">
+          <span className="role-badge role-superadmin">Superadmin</span>
+          <span className="worker-chip" title={session.email}>
+            {session.email}
+          </span>
+          <ThemeToggle compact />
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={() => void onLogout()}
+          >
+            Sign out
+          </button>
+        </div>
+      </header>
+
+      <main className="workspace admin-main">
+        <section className="admin-stats">
+          <div className="admin-stat section">
+            <span className="admin-stat-label">Accounts</span>
+            <strong>{users.length}</strong>
+          </div>
+          <div className="admin-stat section accent">
+            <span className="admin-stat-label">With 2FA</span>
+            <strong>{totpCount}</strong>
+          </div>
+          <div className="admin-stat section">
+            <span className="admin-stat-label">Admins</span>
+            <strong>{adminCount}</strong>
+          </div>
+          <div className="admin-stat section">
+            <span className="admin-stat-label">Superadmins</span>
+            <strong>{superCount}</strong>
+          </div>
+        </section>
+
+        {error ? <p className="admin-banner error">{error}</p> : null}
+        {notice ? <p className="admin-banner notice">{notice}</p> : null}
+
+        <section className="admin-grid">
+          <aside className="section admin-panel admin-create">
+            <div className="section-head">
+              <div>
+                <h2>Add account</h2>
+                <p>Create an admin. Superadmin cannot be created here.</p>
+              </div>
+            </div>
+            <form className="admin-form" onSubmit={onCreate}>
+              <label>
+                Email
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  placeholder="name@company.com"
+                  autoComplete="off"
+                />
+              </label>
+              <label>
+                Password
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={12}
+                  placeholder="At least 12 characters + letters & numbers"
+                  autoComplete="new-password"
+                />
+              </label>
+              <p className="admin-muted">
+                New accounts must complete 2FA before using Bulk301.
+              </p>
+              <button
+                type="submit"
+                className="primary-btn"
+                disabled={creating}
+                style={{ width: '100%' }}
+              >
+                {creating ? 'Creating…' : 'Create admin'}
+              </button>
+            </form>
+          </aside>
+
+          <section className="section admin-panel admin-accounts">
+            <div className="section-head">
+              <div>
+                <h2>Accounts</h2>
+                <p>List refreshes every 15 seconds.</p>
+              </div>
+              <button
+                type="button"
+                className="ghost-btn"
+                disabled={refreshing}
+                onClick={() => void loadUsers()}
+              >
+                {refreshing ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
+
+            {loading && users.length === 0 ? (
+              <div className="admin-empty">Loading accounts…</div>
+            ) : users.length === 0 ? (
+              <div className="admin-empty">No accounts yet.</div>
+            ) : (
+              <div className="admin-account-list">
+                {users.map((account) => {
+                  const isSelf =
+                    account.email === (session.email || '').toLowerCase()
+                  const roleClass =
+                    account.role === 'superadmin' ? 'superadmin' : 'admin'
+
+                  return (
+                    <article
+                      key={account.email}
+                      className="admin-account-card"
+                    >
+                      <div className="admin-account-top">
+                        <div className="admin-account-identity">
+                          <span className={`admin-avatar tone-${roleClass}`}>
+                            {initials(account.email)}
+                          </span>
+                          <div>
+                            <div className="admin-account-name">
+                              <strong>{account.email}</strong>
+                              {isSelf ? (
+                                <span className="admin-you">You</span>
+                              ) : null}
+                            </div>
+                            <span className="admin-account-meta-line">
+                              Updated {formatWhen(account.updatedAt)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="admin-account-meta">
+                          <span className={`role-badge role-${roleClass}`}>
+                            {roleLabel(account.role)}
+                          </span>
+                          <span
+                            className={`status-dot ${account.totpEnabled ? 'is-live' : 'is-warn'}`}
+                          >
+                            {account.totpEnabled ? '2FA on' : '2FA pending'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="admin-account-actions">
+                        {passwordEmail === account.email ? (
+                          <div className="admin-password-row">
+                            <input
+                              type="password"
+                              value={newPassword}
+                              onChange={(e) => setNewPassword(e.target.value)}
+                              placeholder="New password (12+ chars)"
+                              autoComplete="new-password"
+                            />
+                            <button
+                              type="button"
+                              className="primary-btn"
+                              disabled={busyEmail === account.email}
+                              onClick={() =>
+                                void onChangePassword(account.email)
+                              }
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost-btn"
+                              onClick={() => {
+                                setPasswordEmail(null)
+                                setNewPassword('')
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            {(isSelf || account.role !== 'superadmin') && (
+                              <button
+                                type="button"
+                                className="secondary-btn"
+                                disabled={busyEmail === account.email}
+                                onClick={() => {
+                                  setPasswordEmail(account.email)
+                                  setNewPassword('')
+                                }}
+                              >
+                                Reset password
+                              </button>
+                            )}
+                            {!isSelf && account.role !== 'superadmin' ? (
+                              <button
+                                type="button"
+                                className="ghost-btn danger-btn"
+                                disabled={busyEmail === account.email}
+                                onClick={() => setDeleteTarget(account)}
+                              >
+                                Delete
+                              </button>
+                            ) : null}
+                          </>
+                        )}
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            )}
+          </section>
+        </section>
+      </main>
+
+      <footer className="app-footer">
+        <span>Developed by Aris</span>
+      </footer>
+
+      {deleteTarget ? (
+        <div className="admin-modal-backdrop" role="presentation">
+          <div
+            className="admin-modal section"
+            role="dialog"
+            aria-labelledby="delete-user-title"
+          >
+            <h3 id="delete-user-title">Delete account?</h3>
+            <p>
+              Remove <strong>{deleteTarget.email}</strong>? They will no longer
+              be able to sign in.
+            </p>
+            <div className="admin-modal-actions">
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setDeleteTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-btn"
+                disabled={busyEmail === deleteTarget.email}
+                onClick={() => void onConfirmDelete()}
+              >
+                Delete account
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
