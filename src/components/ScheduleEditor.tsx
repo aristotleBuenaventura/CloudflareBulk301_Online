@@ -34,17 +34,12 @@ export function ScheduleEditor({
       <div className="schedule-list" role="list">
         {schedule.map((day) => {
           const isActive = day.key === activeKey
-          const isWeekend = day.key === 'saturday' || day.key === 'sunday'
 
           return (
             <div
               key={day.key}
               role="listitem"
-              className={[
-                'schedule-row',
-                isActive ? 'is-active' : '',
-                isWeekend ? 'is-weekend' : '',
-              ]
+              className={['schedule-row', isActive ? 'is-active' : '']
                 .filter(Boolean)
                 .join(' ')}
             >
