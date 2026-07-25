@@ -604,12 +604,6 @@ export default function App() {
           disabled={applying || saving}
         />
 
-        <SecurityPanel
-          session={session}
-          totpEnabled={totpEnabled}
-          onTotpChange={setTotpEnabled}
-        />
-
         <ResultsPanel
           results={results}
           currentDomain={progress?.currentDomain}

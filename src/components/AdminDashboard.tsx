@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   createAdminUser,
   deleteAdminUser,
+  fetchAuditLog,
   listAdminUsers,
   resetAdminUserPassword,
+  type AuditEvent,
   type ManagedUser,
   type WorkerSession,
 } from '../lib/workerApi'
@@ -13,6 +15,8 @@ interface AdminDashboardProps {
   session: WorkerSession
   onLogout: () => void | Promise<void>
 }
+
+type AuditTab = 'login' | 'redirect' | 'settings'
 
 function formatWhen(value: string) {
   try {
@@ -47,6 +51,76 @@ function initials(email: string) {
   return email.slice(0, 2).toUpperCase() || '?'
 }
 
+function isLoginAction(action: string) {
+  return (
+    action.startsWith('login_') ||
+    action.startsWith('2fa_') ||
+    action === 'logout' ||
+    action === 'session_idle_expired' ||
+    action.startsWith('password_reset_')
+  )
+}
+
+function isRedirectAction(action: string) {
+  return action === 'apply_run'
+}
+
+function isSettingsAction(action: string) {
+  return action === 'config_saved'
+}
+
+function actionLabel(action: string) {
+  switch (action) {
+    case 'login_success':
+      return 'Login success'
+    case 'login_failed':
+      return 'Login failed'
+    case 'login_locked':
+      return 'Login locked'
+    case 'login_rate_limited':
+      return 'Rate limited'
+    case 'login_ip_blocked':
+      return 'IP blocked'
+    case '2fa_required':
+      return '2FA required'
+    case '2fa_success':
+      return '2FA success'
+    case '2fa_failed':
+      return '2FA failed'
+    case '2fa_setup_started':
+      return '2FA setup started'
+    case '2fa_enabled':
+      return '2FA enabled'
+    case '2fa_disabled':
+      return '2FA disabled'
+    case 'logout':
+      return 'Logout'
+    case 'session_idle_expired':
+      return 'Session idle expired'
+    case 'apply_run':
+      return 'Redirect applied'
+    case 'config_saved':
+      return 'Settings changed'
+    case 'password_reset_requested':
+      return 'Password reset requested'
+    case 'password_reset_failed':
+      return 'Password reset failed'
+    case 'password_reset_success':
+      return 'Password reset success'
+    default:
+      return action.replace(/_/g, ' ')
+  }
+}
+
+function actorFromEvent(ev: AuditEvent): string | null {
+  if (ev.actor) return ev.actor
+  if (!ev.detail) return null
+  const emailMatch = ev.detail.match(
+    /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/,
+  )
+  return emailMatch?.[1]?.toLowerCase() || null
+}
+
 export function AdminDashboard({
   session,
   onLogout,
@@ -64,6 +138,12 @@ export function AdminDashboard({
   const [busyEmail, setBusyEmail] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ManagedUser | null>(null)
 
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
+  const [auditLoading, setAuditLoading] = useState(true)
+  const [auditRefreshing, setAuditRefreshing] = useState(false)
+  const [auditError, setAuditError] = useState<string | null>(null)
+  const [auditTab, setAuditTab] = useState<AuditTab>('login')
+
   const loadUsers = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!opts?.quiet) setRefreshing(true)
     try {
@@ -78,13 +158,31 @@ export function AdminDashboard({
     }
   }, [session])
 
+  const loadAudit = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setAuditRefreshing(true)
+    try {
+      const events = await fetchAuditLog(session)
+      setAuditEvents(events)
+      setAuditError(null)
+    } catch (err) {
+      setAuditError(
+        err instanceof Error ? err.message : 'Failed to load audit log',
+      )
+    } finally {
+      setAuditLoading(false)
+      setAuditRefreshing(false)
+    }
+  }, [session])
+
   useEffect(() => {
     void loadUsers()
+    void loadAudit()
     const timer = window.setInterval(() => {
       void loadUsers({ quiet: true })
+      void loadAudit({ quiet: true })
     }, 15_000)
     return () => window.clearInterval(timer)
-  }, [loadUsers])
+  }, [loadUsers, loadAudit])
 
   useEffect(() => {
     if (!notice) return
@@ -162,6 +260,22 @@ export function AdminDashboard({
     return a.email.localeCompare(b.email)
   })
 
+  const filteredAudit = useMemo(() => {
+    return auditEvents.filter((ev) => {
+      if (auditTab === 'login') return isLoginAction(ev.action)
+      if (auditTab === 'redirect') return isRedirectAction(ev.action)
+      return isSettingsAction(ev.action)
+    })
+  }, [auditEvents, auditTab])
+
+  const loginCount = auditEvents.filter((e) => isLoginAction(e.action)).length
+  const redirectCount = auditEvents.filter((e) =>
+    isRedirectAction(e.action),
+  ).length
+  const settingsCount = auditEvents.filter((e) =>
+    isSettingsAction(e.action),
+  ).length
+
   return (
     <div className="app-shell admin-shell">
       <div className="app-atmosphere" aria-hidden="true" />
@@ -174,7 +288,7 @@ export function AdminDashboard({
 
         <div className="admin-bar-lede">
           <strong>Admin Dashboard</strong>
-          <span>User management only</span>
+          <span>Users · online · audit logs</span>
         </div>
 
         <div className="command-actions">
@@ -416,6 +530,96 @@ export function AdminDashboard({
               </div>
             )}
           </section>
+        </section>
+
+        <section className="section admin-panel admin-audit">
+          <div className="section-head">
+            <div>
+              <h2>Audit logs</h2>
+              <p>Filtered activity across logins, redirects, and settings.</p>
+            </div>
+            <button
+              type="button"
+              className="ghost-btn"
+              disabled={auditRefreshing}
+              onClick={() => void loadAudit()}
+            >
+              {auditRefreshing ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+
+          <div className="admin-audit-tabs" role="tablist" aria-label="Audit filters">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={auditTab === 'login'}
+              className={`admin-audit-tab${auditTab === 'login' ? ' is-active' : ''}`}
+              onClick={() => setAuditTab('login')}
+            >
+              Login <span>{loginCount}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={auditTab === 'redirect'}
+              className={`admin-audit-tab${auditTab === 'redirect' ? ' is-active' : ''}`}
+              onClick={() => setAuditTab('redirect')}
+            >
+              Redirect <span>{redirectCount}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={auditTab === 'settings'}
+              className={`admin-audit-tab${auditTab === 'settings' ? ' is-active' : ''}`}
+              onClick={() => setAuditTab('settings')}
+            >
+              Change Settings <span>{settingsCount}</span>
+            </button>
+          </div>
+
+          {auditError ? (
+            <p className="admin-banner error">{auditError}</p>
+          ) : null}
+
+          {auditLoading && auditEvents.length === 0 ? (
+            <div className="admin-empty">Loading audit log…</div>
+          ) : filteredAudit.length === 0 ? (
+            <div className="admin-empty">No events in this tab yet.</div>
+          ) : (
+            <ul className="admin-audit-list">
+              {filteredAudit.map((ev) => {
+                const actor = actorFromEvent(ev)
+                return (
+                  <li key={ev.id} className="admin-audit-item">
+                    <div className="admin-audit-item-top">
+                      <strong>{actionLabel(ev.action)}</strong>
+                      <span>{formatWhen(ev.at)}</span>
+                    </div>
+                    <div className="admin-audit-item-meta">
+                      {actor ? (
+                        <span className="admin-audit-actor">{actor}</span>
+                      ) : (
+                        <span className="admin-audit-actor is-unknown">
+                          Unknown user
+                        </span>
+                      )}
+                      <span>{ev.ip}</span>
+                    </div>
+                    {ev.changes && ev.changes.length > 0 ? (
+                      <ul className="admin-audit-changes">
+                        {ev.changes.map((change) => (
+                          <li key={`${ev.id}-${change}`}>{change}</li>
+                        ))}
+                      </ul>
+                    ) : ev.detail ? (
+                      <p className="admin-audit-detail">{ev.detail}</p>
+                    ) : null}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
         </section>
       </main>
 

@@ -1,3 +1,4 @@
+import type { AppConfig } from '../types'
 import { clientIp, clientUserAgent, randomId } from './crypto'
 
 export type AuditAction =
@@ -27,6 +28,10 @@ export interface AuditEvent {
   ip: string
   userAgent: string
   detail?: string
+  /** Email of the user who performed the action, when known. */
+  actor?: string
+  /** Human-readable change lines (settings diffs). */
+  changes?: string[]
 }
 
 const AUDIT_KEY = 'security_audit'
@@ -37,14 +42,24 @@ export async function appendAudit(
   request: Request,
   action: AuditAction,
   detail?: string,
+  meta?: { actor?: string; changes?: string[] },
 ): Promise<void> {
+  const actor = meta?.actor?.trim().toLowerCase() || undefined
+  const changes = meta?.changes
+    ?.map((c) => c.trim())
+    .filter(Boolean)
+    .slice(0, 40)
+    .map((c) => c.slice(0, 300))
+
   const event: AuditEvent = {
     id: randomId(8),
     at: new Date().toISOString(),
     action,
     ip: clientIp(request),
     userAgent: clientUserAgent(request),
-    detail: detail?.slice(0, 500),
+    detail: detail?.slice(0, 1500),
+    actor,
+    changes: changes && changes.length > 0 ? changes : undefined,
   }
 
   const raw = await kv.get(AUDIT_KEY)
@@ -73,4 +88,61 @@ export async function readAudit(
   } catch {
     return []
   }
+}
+
+function domainSet(domains: string[]): Set<string> {
+  return new Set(
+    domains.map((d) => d.trim().toLowerCase()).filter(Boolean),
+  )
+}
+
+/** Build readable lines for schedule / time / CSV / wildcard diffs. */
+export function describeConfigChanges(
+  prev: AppConfig,
+  next: AppConfig,
+): string[] {
+  const changes: string[] = []
+
+  const prevByKey = new Map(prev.schedule.map((d) => [d.key, d]))
+  for (const day of next.schedule) {
+    const old = prevByKey.get(day.key)
+    const oldUrl = (old?.targetUrl || '').trim()
+    const newUrl = (day.targetUrl || '').trim()
+    if (oldUrl !== newUrl) {
+      const label = day.label || day.key
+      changes.push(
+        `${label}: ${oldUrl || '(empty)'} → ${newUrl || '(empty)'}`,
+      )
+    }
+  }
+
+  if (prev.applyTime !== next.applyTime) {
+    changes.push(`Apply time: ${prev.applyTime} → ${next.applyTime}`)
+  }
+
+  if ((prev.timezone || '') !== (next.timezone || '')) {
+    changes.push(`Timezone: ${prev.timezone} → ${next.timezone}`)
+  }
+
+  if (prev.wildcard !== next.wildcard) {
+    changes.push(
+      `Wildcard: ${prev.wildcard ? 'on' : 'off'} → ${next.wildcard ? 'on' : 'off'}`,
+    )
+  }
+
+  const before = domainSet(prev.domains)
+  const after = domainSet(next.domains)
+  const sameDomains =
+    before.size === after.size && [...before].every((d) => after.has(d))
+  if (!sameDomains) {
+    let added = 0
+    let removed = 0
+    for (const d of after) if (!before.has(d)) added += 1
+    for (const d of before) if (!after.has(d)) removed += 1
+    changes.push(
+      `Uploaded CSV / domains: ${prev.domains.length} → ${next.domains.length} (+${added} / −${removed})`,
+    )
+  }
+
+  return changes
 }

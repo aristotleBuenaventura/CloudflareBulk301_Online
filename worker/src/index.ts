@@ -15,7 +15,7 @@ import {
   getTargetForDate,
   shouldRunScheduledApply,
 } from './schedule'
-import { appendAudit, readAudit } from './security/audit'
+import { appendAudit, describeConfigChanges, readAudit } from './security/audit'
 import { clientIp, timingSafeEqual } from './security/crypto'
 import {
   assertTrustedOrigin,
@@ -705,6 +705,7 @@ export default {
             request,
             'login_failed',
             `email=${email} failed=${state.failed}`,
+            { actor: email },
           )
           if (state.lockedUntil) {
             return json(
@@ -724,7 +725,9 @@ export default {
 
         if (user.totpEnabled && user.totpSecret) {
           const challenge = await createChallenge(env.CONFIG, request, user.email)
-          await appendAudit(env.CONFIG, request, '2fa_required', user.email)
+          await appendAudit(env.CONFIG, request, '2fa_required', user.email, {
+            actor: user.email,
+          })
           return json(request, env, {
             ok: true,
             requires2fa: true,
@@ -739,6 +742,7 @@ export default {
           request,
           'login_success',
           `${user.email} needs 2FA setup`,
+          { actor: user.email },
         )
         return issueSessionResponse(request, env, user.email, false)
       }
@@ -766,23 +770,40 @@ export default {
         }
         const ok = await verifyTotpCode(user.totpSecret, String(body.code || ''))
         if (!ok) {
-          await appendAudit(env.CONFIG, request, '2fa_failed', challenge.email)
+          await appendAudit(env.CONFIG, request, '2fa_failed', challenge.email, {
+            actor: challenge.email,
+          })
           await recordFailedLogin(env.CONFIG)
           return json(request, env, { error: 'Invalid authenticator code.' }, 401)
         }
         await clearFailedLogins(env.CONFIG)
-        await appendAudit(env.CONFIG, request, '2fa_success', user.email)
-        await appendAudit(env.CONFIG, request, 'login_success', `${user.email} via 2FA`)
+        await appendAudit(env.CONFIG, request, '2fa_success', user.email, {
+          actor: user.email,
+        })
+        await appendAudit(
+          env.CONFIG,
+          request,
+          'login_success',
+          `${user.email} via 2FA`,
+          { actor: user.email },
+        )
         return issueSessionResponse(request, env, user.email, true)
       }
 
       if (path === '/api/auth/logout' && request.method === 'POST') {
         const raw = readCookie(request)
+        let logoutEmail: string | undefined
         if (raw) {
           const sessionId = await parseCookieValue(raw, signingSecret(env))
-          if (sessionId) await revokeSession(env.CONFIG, sessionId)
+          if (sessionId) {
+            const session = await loadSession(env.CONFIG, sessionId)
+            logoutEmail = session?.email
+            await revokeSession(env.CONFIG, sessionId)
+          }
         }
-        await appendAudit(env.CONFIG, request, 'logout')
+        await appendAudit(env.CONFIG, request, 'logout', logoutEmail, {
+          actor: logoutEmail,
+        })
         const cookieOpts = cookieOptions(request, env.COOKIE_SAMESITE, isPublicInternet(env))
         return json(
           request,
@@ -1206,9 +1227,9 @@ export default {
       }
 
       if (path === '/api/audit' && request.method === 'GET') {
-        const auth = await requireAppAccess(request, env)
+        const auth = await requireSuperadmin(request, env)
         if (!auth.ok) return auth.response
-        const events = await readAudit(env.CONFIG, 80)
+        const events = await readAudit(env.CONFIG, 200)
         return json(request, env, { ok: true, events })
       }
 
@@ -1259,12 +1280,16 @@ export default {
           env.TIMEZONE || 'Asia/Manila',
         )
         await writeConfig(env, next)
-        await appendAudit(
-          env.CONFIG,
-          request,
-          'config_saved',
-          `domains=${next.domains.length} time=${next.applyTime}`,
-        )
+        const changes = describeConfigChanges(current, next)
+        if (changes.length > 0) {
+          await appendAudit(
+            env.CONFIG,
+            request,
+            'config_saved',
+            changes.join(' · '),
+            { actor: auth.session.email, changes },
+          )
+        }
         return json(request, env, { ok: true, config: next })
       }
 
@@ -1328,6 +1353,7 @@ export default {
             request,
             'apply_run',
             `${summary.dayKey} → ${summary.targetUrl} ok=${summary.success} fail=${summary.failed}`,
+            { actor: auth.session.email },
           )
           return json(request, env, { ok: true, summary, parallel: true })
         } catch (error) {
@@ -1347,6 +1373,7 @@ export default {
         const body = (await request.json().catch(() => ({}))) as {
           claimFingerprint?: string
         }
+        const actorEmail = auth.session.email
 
         const encoder = new TextEncoder()
         const stream = new ReadableStream<Uint8Array>({
@@ -1424,6 +1451,7 @@ export default {
                 request,
                 'apply_run',
                 `${summary.dayKey} → ${summary.targetUrl} ok=${summary.success} fail=${summary.failed}`,
+                { actor: actorEmail },
               )
               send({ type: 'done', summary })
             } catch (error) {
@@ -1474,6 +1502,7 @@ export default {
           request,
           'apply_run',
           `${summary.dayKey} → ${summary.targetUrl}`,
+          { actor: auth.session.email },
         )
         return json(request, env, { ok: true, summary })
       }
@@ -1487,6 +1516,7 @@ export default {
           request,
           'apply_run',
           `${summary.dayKey} → ${summary.targetUrl}`,
+          { actor: auth.session.email },
         )
         return json(request, env, { ok: true, summary })
       }

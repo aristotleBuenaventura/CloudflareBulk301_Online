@@ -1061,6 +1061,124 @@ a {
   }
 }
 
+.admin-audit {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.admin-audit-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.admin-audit-tab {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.admin-audit-tab span {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+.admin-audit-tab.is-active {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+
+.admin-audit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.admin-audit-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+  background: var(--surface-2);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.admin-audit-item-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+.admin-audit-item-top strong {
+  font-size: 0.82rem;
+}
+
+.admin-audit-item-top span,
+.admin-audit-item-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.admin-audit-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.85rem;
+  align-items: center;
+}
+
+.admin-audit-actor {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.admin-audit-actor.is-unknown {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.admin-audit-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  word-break: break-word;
+}
+
+.admin-audit-changes {
+  list-style: none;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.admin-audit-changes li {
+  font-size: 0.8rem;
+  color: var(--text);
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  word-break: break-word;
+  font-family: var(--font-mono);
+}
+
 /* ——— Responsive ——— */
 @media (max-width: 920px) {
   .command-bar {

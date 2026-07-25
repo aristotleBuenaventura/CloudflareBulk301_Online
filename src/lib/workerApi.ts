@@ -68,6 +68,8 @@ export interface AuditEvent {
   ip: string
   userAgent: string
   detail?: string
+  actor?: string
+  changes?: string[]
 }
 
 const jsonHeaders: HeadersInit = {
