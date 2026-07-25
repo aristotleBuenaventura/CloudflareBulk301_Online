@@ -15,13 +15,17 @@ preview_id = "00000000000000000000000000000001"
 
 [vars]
 TIMEZONE = "Asia/Manila"
+# For public internet deploy, set these (Cloudflare dashboard or uncomment):
+# PUBLIC_INTERNET = "true"
 # ALLOWED_ORIGINS = "https://your-ui.example.com"
 # IP_ALLOWLIST = "203.0.113.10"
-# COOKIE_SAMESITE = "Lax"
+# COOKIE_SAMESITE = "None"
+# BIND_SESSION_IP = "true"
 
 # Secrets (set via CLI — never commit):
 #   npx wrangler secret put CLOUDFLARE_API_TOKEN
 #   npx wrangler secret put ADMIN_SECRET
+# ADMIN_SECRET must be 16+ chars and not a placeholder when PUBLIC_INTERNET=true
 #
 # Token least privilege (recommended):
 #   Zone → Zone: Read

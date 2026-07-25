@@ -84,32 +84,39 @@ Then:
 4. **Save settings**  
 5. 301s run on schedule only  
 
-## Security (live hardening)
+## Security (live / public internet)
 
 | Control | How |
 |---|---|
-| HttpOnly cookie session | No admin secret in `localStorage`; cookie signed + idle timeout 30m |
-| Strong password | Long random `ADMIN_SECRET` |
-| 2FA (TOTP) | Security panel → authenticator app |
-| Rate limit + lockout | 20 attempts / 15m per IP; lock after 5 failed logins |
-| IP allowlist | Optional `IP_ALLOWLIST` in Worker vars |
-| Audit log | Security panel (logins, 2FA, applies, config saves) |
-| Secure headers | CSP, nosniff, frame deny, referrer policy |
-| CF token least privilege | Zone Read + Page Rules Edit + Single Redirect Edit only |
+| HttpOnly cookie session | Signed cookie; idle timeout 30m; optional IP bind |
+| Email + password + mandatory 2FA | No schedule/301 until 2FA enabled |
+| Fail-closed CORS/CSRF | `PUBLIC_INTERNET=true` + `ALLOWED_ORIGINS` (Origin checked) |
+| Rate limit + lockout | 10 login / 15m IP; lock after 5 fails; bootstrap 5/hour |
+| IP allowlist | Required for first-user bootstrap when public |
+| No public registration | `/api/auth/register` disabled; upsert needs ADMIN_SECRET |
+| Additional users | Existing 2FA session + ADMIN_SECRET |
+| Hardened headers | CSP, HSTS (HTTPS), nosniff, frame deny, no-store |
+| Strong secrets | Password 12+ letter/number; ADMIN_SECRET 16+ (no placeholders) |
+| CF token least privilege | Zone Read + Page Rules/Redirect Edit only |
 
-Production CORS (UI host ≠ Worker host):
+### Public deploy vars (`worker/wrangler.toml` or dashboard)
 
 ```toml
-# worker/wrangler.toml [vars]
+PUBLIC_INTERNET = "true"
 ALLOWED_ORIGINS = "https://your-ui.example.com"
+IP_ALLOWLIST = "YOUR.OFFICE.OR.VPN.IP"
 COOKIE_SAMESITE = "None"
 ```
 
-Optional IP gate:
+Create first user (from allowlisted IP):
 
-```toml
-IP_ALLOWLIST = "203.0.113.10,198.51.100.20"
+```bash
+curl -X POST https://YOUR-WORKER.workers.dev/api/auth/upsert-user \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"StrongPass123!","adminSecret":"YOUR_ADMIN_SECRET"}'
 ```
+
+Later users: sign in (2FA) then call the same endpoint with session cookie + ADMIN_SECRET.
 
 ## 3. Deploy Worker (livesite automation)
 
@@ -160,7 +167,10 @@ Zone resources: **only the zones you need** — not Account Administrator.
 
 ## Security checklist
 
+- [ ] Set `PUBLIC_INTERNET=true`, `ALLOWED_ORIGINS`, `IP_ALLOWLIST` on production Worker  
+- [ ] Strong `ADMIN_SECRET` (16+, not a placeholder) via `wrangler secret put`  
 - [ ] Never commit `.dev.vars`, `.env`, or real tokens  
-- [ ] Revoke any token that was pasted into chat  
-- [ ] Use a strong `ADMIN_SECRET`  
-- [ ] Cloudflare token only via `wrangler secret put` on production  
+- [ ] Revoke any token/password that was pasted into chat  
+- [ ] Cloudflare token only via `wrangler secret put` (least privilege)  
+- [ ] Create users only from allowlisted IP / authenticated admin  
+- [ ] Confirm 2FA enabled before sharing the live URL  

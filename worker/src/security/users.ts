@@ -10,6 +10,8 @@ export interface UserRecord {
   updatedAt: string
 }
 
+const USERS_INDEX_KEY = 'users_index'
+
 function userKey(email: string): string {
   return `user:${normalizeEmail(email)}`
 }
@@ -37,7 +39,7 @@ function hexToBytes(hex: string): Uint8Array {
 
 /** Stored format: pbkdf2$iterations$saltHex$hashHex */
 export async function hashPassword(password: string): Promise<string> {
-  const iterations = 100_000
+  const iterations = 200_000
   const salt = new Uint8Array(16)
   crypto.getRandomValues(salt)
   const key = await crypto.subtle.importKey(
@@ -102,8 +104,53 @@ export async function getUser(
   }
 }
 
+async function readUsersIndex(kv: KVNamespace): Promise<string[]> {
+  const raw = await kv.get(USERS_INDEX_KEY)
+  if (!raw) return []
+  try {
+    const list = JSON.parse(raw) as string[]
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+async function addToUsersIndex(kv: KVNamespace, email: string): Promise<void> {
+  const list = await readUsersIndex(kv)
+  const normalized = normalizeEmail(email)
+  if (!list.includes(normalized)) {
+    list.push(normalized)
+    await kv.put(USERS_INDEX_KEY, JSON.stringify(list))
+  }
+}
+
+export async function countUsers(kv: KVNamespace): Promise<number> {
+  return (await readUsersIndex(kv)).length
+}
+
+export function assertStrongPassword(password: string): void {
+  if (password.length < 12) {
+    throw new Error('Password must be at least 12 characters.')
+  }
+  if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+    throw new Error('Password must include letters and numbers.')
+  }
+}
+
+export function assertStrongAdminSecret(secret: string): void {
+  if (!secret || secret.length < 16) {
+    throw new Error(
+      'ADMIN_SECRET must be at least 16 characters on this server.',
+    )
+  }
+  if (/change-me|dev-admin|password|^secret$/i.test(secret)) {
+    throw new Error('ADMIN_SECRET looks like a placeholder — set a strong value.')
+  }
+}
+
 export async function putUser(kv: KVNamespace, user: UserRecord): Promise<void> {
   await kv.put(userKey(user.email), JSON.stringify(user))
+  await addToUsersIndex(kv, user.email)
 }
 
 export async function createUser(
@@ -115,9 +162,7 @@ export async function createUser(
   if (!isValidEmail(normalized)) {
     throw new Error('Invalid email address.')
   }
-  if (password.length < 10) {
-    throw new Error('Password must be at least 10 characters.')
-  }
+  assertStrongPassword(password)
   const existing = await getUser(kv, normalized)
   if (existing) {
     throw new Error('An account with this email already exists.')
@@ -142,6 +187,7 @@ export async function upsertUserPassword(
   password: string,
 ): Promise<UserRecord> {
   const normalized = normalizeEmail(email)
+  assertStrongPassword(password)
   const existing = await getUser(kv, normalized)
   if (existing) {
     const next: UserRecord = {
@@ -155,6 +201,9 @@ export async function upsertUserPassword(
   return createUser(kv, normalized, password)
 }
 
-export function newPendingId(): string {
-  return randomId(8)
+export async function ensureUserIndexed(
+  kv: KVNamespace,
+  email: string,
+): Promise<void> {
+  await addToUsersIndex(kv, email)
 }

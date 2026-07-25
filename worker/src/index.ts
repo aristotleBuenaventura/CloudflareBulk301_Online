@@ -1,3 +1,4 @@
+import type { Env } from './env'
 import {
   APPLY_CONCURRENCY,
   applyOneDomain,
@@ -15,14 +16,17 @@ import {
   shouldRunScheduledApply,
 } from './schedule'
 import { appendAudit, readAudit } from './security/audit'
-import { timingSafeEqual } from './security/crypto'
+import { clientIp, timingSafeEqual } from './security/crypto'
 import {
+  assertTrustedOrigin,
   cookieOptions,
   corsHeadersFor,
+  isPublicInternet,
   parseAllowedOrigins,
   securityHeaders,
 } from './security/headers'
 import {
+  assertBootstrapRateLimit,
   assertLoginRateLimit,
   assertNotLocked,
   clearFailedLogins,
@@ -52,7 +56,10 @@ import {
   verifyTotpCode,
 } from './security/totp'
 import {
+  assertStrongAdminSecret,
+  countUsers,
   createUser,
+  ensureUserIndexed,
   getUser,
   isValidEmail,
   normalizeEmail,
@@ -69,15 +76,9 @@ import {
   type DomainResult,
 } from './types'
 
-export interface Env {
-  CONFIG: KVNamespace
-  CLOUDFLARE_API_TOKEN: string
-  ADMIN_SECRET: string
-  TIMEZONE: string
-  ALLOWED_ORIGINS?: string
-  IP_ALLOWLIST?: string
-  COOKIE_SAMESITE?: string
-}
+export type { Env }
+
+const LOCKOUT_HINT_MIN = 15
 
 const CONFIG_KEY = 'app_config'
 const LAST_RUN_KEY = 'last_run'
@@ -90,13 +91,25 @@ function signingSecret(env: Env): string {
   return env.ADMIN_SECRET
 }
 
+function bindSessionIp(env: Env): boolean {
+  const v = String(env.BIND_SESSION_IP || '').toLowerCase()
+  if (v === '0' || v === 'false') return false
+  if (v === '1' || v === 'true') return true
+  return isPublicInternet(env)
+}
+
 function withHeaders(
   request: Request,
   env: Env,
   init: ResponseInit & { headers?: HeadersInit } = {},
 ): ResponseInit {
-  const cors = corsHeadersFor(request, parseAllowedOrigins(env.ALLOWED_ORIGINS))
-  const base = { ...securityHeaders(), ...cors }
+  const publicInternet = isPublicInternet(env)
+  const cors = corsHeadersFor(
+    request,
+    parseAllowedOrigins(env.ALLOWED_ORIGINS),
+    publicInternet,
+  )
+  const base = { ...securityHeaders(request, publicInternet), ...cors }
   const extra =
     init.headers instanceof Headers
       ? Object.fromEntries(init.headers.entries())
@@ -129,6 +142,12 @@ function unauthorized(request: Request, env: Env, message?: string): Response {
   )
 }
 
+function rejectOrigin(request: Request, env: Env): Response | null {
+  const check = assertTrustedOrigin(request, env)
+  if (check.ok) return null
+  return json(request, env, { error: check.error }, check.status)
+}
+
 async function requireSession(
   request: Request,
   env: Env,
@@ -153,6 +172,21 @@ async function requireSession(
   const session = await loadSession(env.CONFIG, sessionId)
   if (!session) {
     return { ok: false, response: unauthorized(request, env) }
+  }
+  if (bindSessionIp(env) && session.ip && session.ip !== 'unknown') {
+    const ip = clientIp(request)
+    if (ip !== 'unknown' && ip !== session.ip) {
+      await revokeSession(env.CONFIG, session.id)
+      await appendAudit(env.CONFIG, request, 'logout', 'session ip mismatch')
+      return {
+        ok: false,
+        response: unauthorized(
+          request,
+          env,
+          'Session invalidated due to network change. Sign in again.',
+        ),
+      }
+    }
   }
   if (Date.now() - session.lastSeenAt > IDLE_TIMEOUT_MS) {
     await revokeSession(env.CONFIG, session.id)
@@ -327,7 +361,7 @@ async function issueSessionResponse(
 ): Promise<Response> {
   const session = await createSession(env.CONFIG, request, email)
   const value = await signCookieValue(session.id, signingSecret(env))
-  const cookieOpts = cookieOptions(request, env.COOKIE_SAMESITE)
+  const cookieOpts = cookieOptions(request, env.COOKIE_SAMESITE, isPublicInternet(env))
   return json(
     request,
     env,
@@ -371,38 +405,106 @@ export default {
     const path = url.pathname.replace(/\/+$/, '') || '/'
 
     try {
+      const originBlock = rejectOrigin(request, env)
+      if (originBlock && path !== '/' && path !== '/api/health') {
+        return originBlock
+      }
+
       if (path === '/' || path === '/api/health') {
-        const config = await readConfig(env)
-        const clock = formatPhilippineClock(new Date(), config.timezone)
         return json(request, env, {
           ok: true,
           service: 'bulk301-scheduler',
-          timezone: config.timezone,
-          applyTime: config.applyTime,
-          clock,
-          hasToken: Boolean(env.CLOUDFLARE_API_TOKEN),
-          hasAdminSecret: Boolean(env.ADMIN_SECRET),
           auth: 'cookie-session',
         })
       }
 
       // ——— Auth ———
+      // Public self-registration disabled. Use upsert-user (bootstrap / admin).
       if (path === '/api/auth/register' && request.method === 'POST') {
+        return json(
+          request,
+          env,
+          { error: 'Public registration is disabled. Ask an admin to create your account.' },
+          403,
+        )
+      }
+
+      // First user: ADMIN_SECRET only (optionally IP allowlisted).
+      // Later users: authenticated 2FA session + ADMIN_SECRET.
+      if (path === '/api/auth/upsert-user' && request.method === 'POST') {
         const allowlist = parseIpAllowlist(env.IP_ALLOWLIST)
-        if (!isIpAllowed(request, allowlist)) {
+        const publicInternet = isPublicInternet(env)
+        if (allowlist.length > 0 && !isIpAllowed(request, allowlist)) {
+          await appendAudit(env.CONFIG, request, 'login_ip_blocked', 'upsert-user')
           return json(request, env, { error: 'IP not allowed.' }, 403)
         }
+
+        const rate = await assertBootstrapRateLimit(env.CONFIG, request)
+        if (!rate.ok) {
+          return json(
+            request,
+            env,
+            { error: `Too many admin attempts. Try again in ${rate.retryAfterSec}s.` },
+            429,
+          )
+        }
+
         const body = (await request.json().catch(() => ({}))) as {
           email?: string
           password?: string
           adminSecret?: string
         }
-        if (!adminSecretOk(env, String(body.adminSecret || ''))) {
-          await appendAudit(env.CONFIG, request, 'login_failed', 'register bad admin secret')
+        const adminSecret = String(body.adminSecret || '')
+        if (!adminSecretOk(env, adminSecret)) {
+          await appendAudit(env.CONFIG, request, 'login_failed', 'upsert bad admin secret')
           return json(request, env, { error: 'Invalid admin secret.' }, 401)
         }
+        if (publicInternet) {
+          try {
+            assertStrongAdminSecret(env.ADMIN_SECRET)
+          } catch (error) {
+            return json(
+              request,
+              env,
+              { error: error instanceof Error ? error.message : String(error) },
+              503,
+            )
+          }
+        }
+
+        const users = await countUsers(env.CONFIG)
+        if (users > 0) {
+          const auth = await requireAppAccess(request, env)
+          if (!auth.ok) {
+            return json(
+              request,
+              env,
+              {
+                error:
+                  'Creating additional users requires an authenticated admin session (2FA) plus ADMIN_SECRET.',
+              },
+              401,
+            )
+          }
+        } else if (publicInternet) {
+          if (allowlist.length === 0) {
+            return json(
+              request,
+              env,
+              {
+                error:
+                  'Set IP_ALLOWLIST before creating the first user on a public Worker.',
+              },
+              503,
+            )
+          }
+          if (!isIpAllowed(request, allowlist)) {
+            return json(request, env, { error: 'IP not allowed for bootstrap.' }, 403)
+          }
+        }
+
         try {
-          const user = await createUser(
+          const user = await upsertUserPassword(
             env.CONFIG,
             String(body.email || ''),
             String(body.password || ''),
@@ -411,40 +513,7 @@ export default {
             env.CONFIG,
             request,
             'login_success',
-            `registered ${user.email}`,
-          )
-          return json(request, env, {
-            ok: true,
-            email: user.email,
-            totpEnabled: false,
-            requires2faSetup: true,
-            message: 'Account created. Sign in, then set up 2FA before using the app.',
-          })
-        } catch (error) {
-          return json(
-            request,
-            env,
-            { error: error instanceof Error ? error.message : String(error) },
-            400,
-          )
-        }
-      }
-
-      // Bootstrap / reset password for a user (requires ADMIN_SECRET).
-      if (path === '/api/auth/upsert-user' && request.method === 'POST') {
-        const body = (await request.json().catch(() => ({}))) as {
-          email?: string
-          password?: string
-          adminSecret?: string
-        }
-        if (!adminSecretOk(env, String(body.adminSecret || ''))) {
-          return json(request, env, { error: 'Invalid admin secret.' }, 401)
-        }
-        try {
-          const user = await upsertUserPassword(
-            env.CONFIG,
-            String(body.email || ''),
-            String(body.password || ''),
+            `upsert-user ${user.email}`,
           )
           return json(request, env, {
             ok: true,
@@ -534,6 +603,7 @@ export default {
         }
 
         await clearFailedLogins(env.CONFIG)
+        await ensureUserIndexed(env.CONFIG, user.email)
 
         if (user.totpEnabled && user.totpSecret) {
           const challenge = await createChallenge(env.CONFIG, request, user.email)
@@ -596,7 +666,7 @@ export default {
           if (sessionId) await revokeSession(env.CONFIG, sessionId)
         }
         await appendAudit(env.CONFIG, request, 'logout')
-        const cookieOpts = cookieOptions(request, env.COOKIE_SAMESITE)
+        const cookieOpts = cookieOptions(request, env.COOKIE_SAMESITE, isPublicInternet(env))
         return json(
           request,
           env,
@@ -1076,4 +1146,3 @@ export default {
   },
 }
 
-const LOCKOUT_HINT_MIN = 15

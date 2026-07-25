@@ -2,10 +2,10 @@
 # Least privilege: Zone → Zone (Read), Page Rules (Edit), Single Redirect (Edit).
 CLOUDFLARE_API_TOKEN=
 
-# Bootstrap only — create/reset users (not used for daily login).
+# Bootstrap / create-user gate (NOT daily login). Use 16+ random chars for public.
 ADMIN_SECRET=change-me-to-a-long-random-string
 
-# Optional:
-# IP_ALLOWLIST=203.0.113.10
-# ALLOWED_ORIGINS=https://your-ui.example.com
-# COOKIE_SAMESITE=Lax
+# Local: leave PUBLIC_INTERNET unset/false so Vite proxy works without ALLOWED_ORIGINS.
+# PUBLIC_INTERNET=false
+# IP_ALLOWLIST=
+# ALLOWED_ORIGINS=
