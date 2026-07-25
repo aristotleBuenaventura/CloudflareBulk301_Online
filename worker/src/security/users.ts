@@ -6,6 +6,8 @@ export interface UserRecord {
   email: string
   passwordHash: string
   role: UserRole
+  /** Bumped on password change to invalidate older sessions. */
+  passwordVersion: number
   totpEnabled: boolean
   totpSecret: string | null
   pendingTotpSecret: string | null
@@ -109,6 +111,10 @@ function hydrateUser(raw: UserRecord): UserRecord {
   return {
     ...raw,
     role: normalizeRole(raw.role),
+    passwordVersion:
+      typeof raw.passwordVersion === 'number' && raw.passwordVersion >= 0
+        ? raw.passwordVersion
+        : 0,
   }
 }
 
@@ -237,6 +243,7 @@ export async function createUser(
     email: normalized,
     passwordHash: await hashPassword(password),
     role: normalizeRole(role),
+    passwordVersion: 0,
     totpEnabled: false,
     totpSecret: null,
     pendingTotpSecret: null,
@@ -261,6 +268,7 @@ export async function upsertUserPassword(
       ...existing,
       passwordHash: await hashPassword(password),
       role: role ? normalizeRole(role) : existing.role,
+      passwordVersion: (existing.passwordVersion ?? 0) + 1,
       updatedAt: new Date().toISOString(),
     }
     await putUser(kv, next)
@@ -280,6 +288,7 @@ export async function setUserPassword(
   const next: UserRecord = {
     ...user,
     passwordHash: await hashPassword(password),
+    passwordVersion: (user.passwordVersion ?? 0) + 1,
     updatedAt: new Date().toISOString(),
   }
   await putUser(kv, next)

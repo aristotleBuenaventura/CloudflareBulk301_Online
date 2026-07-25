@@ -111,6 +111,14 @@ export async function assertBootstrapRateLimit(
   )
 }
 
+export async function assertForgotPasswordRateLimit(
+  kv: KVNamespace,
+  request: Request,
+): Promise<{ ok: true } | { ok: false; retryAfterSec: number }> {
+  const ip = clientIp(request)
+  return bumpRate(kv, `auth_forgot:${ip}`, RATE_WINDOW_MS, 5)
+}
+
 export function parseIpAllowlist(raw: string | undefined): string[] {
   return String(raw || '')
     .split(',')

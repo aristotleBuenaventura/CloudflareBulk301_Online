@@ -11,4 +11,11 @@ export interface Env {
   PUBLIC_INTERNET?: string
   /** When true with PUBLIC_INTERNET, bind sessions to client IP */
   BIND_SESSION_IP?: string
+  /** Public UI origin for password-reset links (e.g. http://localhost:5173) */
+  APP_URL?: string
+  SMTP_HOST?: string
+  SMTP_PORT?: string
+  SMTP_USER?: string
+  SMTP_PASS?: string
+  SMTP_FROM?: string
 }

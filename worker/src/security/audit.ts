@@ -16,6 +16,9 @@ export type AuditAction =
   | 'session_idle_expired'
   | 'apply_run'
   | 'config_saved'
+  | 'password_reset_requested'
+  | 'password_reset_failed'
+  | 'password_reset_success'
 
 export interface AuditEvent {
   id: string

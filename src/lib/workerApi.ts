@@ -232,6 +232,51 @@ export async function deleteAdminUser(
   if (!response.ok) throw new Error(await parseError(response))
 }
 
+export async function forgotPassword(
+  workerUrl: string,
+  email: string,
+): Promise<{ message: string; retryAfterSeconds: number }> {
+  const response = await apiFetch(workerUrl, '/api/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+  const body = (await response.json().catch(() => ({}))) as {
+    error?: string
+    message?: string
+    retryAfterSeconds?: number
+  }
+  if (!response.ok) {
+    const err = new Error(body.error || `Request failed (HTTP ${response.status})`)
+    ;(err as Error & { retryAfterSeconds?: number }).retryAfterSeconds =
+      body.retryAfterSeconds
+    throw err
+  }
+  return {
+    message:
+      body.message ||
+      'If an account exists for that email, a password reset link has been sent.',
+    retryAfterSeconds: Math.max(1, body.retryAfterSeconds ?? 120),
+  }
+}
+
+export async function resetPassword(
+  workerUrl: string,
+  token: string,
+  password: string,
+): Promise<{ message: string }> {
+  const response = await apiFetch(workerUrl, '/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, password }),
+  })
+  if (!response.ok) throw new Error(await parseError(response))
+  const body = (await response.json()) as { message?: string }
+  return {
+    message:
+      body.message ||
+      'Password updated. You can sign in with your new password.',
+  }
+}
+
 export async function fetchConfig(
   session: WorkerSession,
 ): Promise<ConfigResponse> {

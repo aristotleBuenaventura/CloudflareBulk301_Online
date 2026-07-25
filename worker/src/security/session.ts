@@ -18,6 +18,8 @@ export interface SessionRecord {
   lastSeenAt: number
   ip: string
   userAgent: string
+  /** Matches UserRecord.passwordVersion at session create time. */
+  passwordVersion: number
 }
 
 export interface ChallengeRecord {
@@ -39,6 +41,7 @@ export async function createSession(
   kv: KVNamespace,
   request: Request,
   email: string,
+  passwordVersion = 0,
 ): Promise<SessionRecord> {
   const id = randomId(24)
   const now = Date.now()
@@ -49,6 +52,7 @@ export async function createSession(
     lastSeenAt: now,
     ip: clientIp(request),
     userAgent: clientUserAgent(request),
+    passwordVersion,
   }
   await kv.put(sessionKey(id), JSON.stringify(record), {
     expirationTtl: Math.ceil(SESSION_TTL_MS / 1000),
@@ -70,7 +74,12 @@ export async function loadSession(
   const raw = await kv.get(sessionKey(sessionId))
   if (!raw) return null
   try {
-    return JSON.parse(raw) as SessionRecord
+    const record = JSON.parse(raw) as SessionRecord
+    return {
+      ...record,
+      passwordVersion:
+        typeof record.passwordVersion === 'number' ? record.passwordVersion : 0,
+    }
   } catch {
     return null
   }

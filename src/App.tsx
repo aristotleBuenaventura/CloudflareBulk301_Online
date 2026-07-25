@@ -42,8 +42,16 @@ export default function App() {
   const [role, setRole] = useState<UserRole>('admin')
   const [totpEnabled, setTotpEnabled] = useState(false)
   const [loginError, setLoginError] = useState<string | null>(null)
+  const [loginNotice, setLoginNotice] = useState<string | null>(null)
   const [loginLoading, setLoginLoading] = useState(false)
   const [challengeToken, setChallengeToken] = useState<string | null>(null)
+  const [resetToken, setResetToken] = useState<string | null>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('resetToken')
+    } catch {
+      return null
+    }
+  })
   const [booting, setBooting] = useState(true)
 
   const [schedule, setSchedule] = useState<DaySchedule[]>(DEFAULT_SCHEDULE)
@@ -276,6 +284,7 @@ export default function App() {
           return false
         }
         await enterApp(result.email || email)
+        setLoginNotice(null)
         return true
       } catch (error) {
         setLoginError(error instanceof Error ? error.message : String(error))
@@ -294,6 +303,7 @@ export default function App() {
       try {
         const result = await verify2fa(WORKER_URL, token, code)
         await enterApp(result.email)
+        setLoginNotice(null)
         return true
       } catch (error) {
         setLoginError(error instanceof Error ? error.message : String(error))
@@ -428,11 +438,20 @@ export default function App() {
   if (!session) {
     return (
       <LoginScreen
+        workerUrl={WORKER_URL}
         onLogin={handleLogin}
         onVerify2fa={handleVerify2fa}
         error={loginError}
+        notice={loginNotice}
         loading={loginLoading}
         challengeToken={challengeToken}
+        resetToken={resetToken}
+        onClearResetToken={() => {
+          setResetToken(null)
+          const url = new URL(window.location.href)
+          url.searchParams.delete('resetToken')
+          window.history.replaceState({}, '', url.pathname + url.search)
+        }}
       />
     )
   }

@@ -27,6 +27,7 @@ import {
 } from './security/headers'
 import {
   assertBootstrapRateLimit,
+  assertForgotPasswordRateLimit,
   assertLoginRateLimit,
   assertNotLocked,
   clearFailedLogins,
@@ -34,6 +35,15 @@ import {
   parseIpAllowlist,
   recordFailedLogin,
 } from './security/rateLimit'
+import { sendPasswordResetEmail } from './security/email'
+import {
+  buildResetUrl,
+  cooldownRemainingMs,
+  createPasswordResetToken,
+  consumePasswordResetToken,
+  markResetCooldown,
+  resetCooldownSeconds,
+} from './security/passwordReset'
 import {
   buildSessionCookie,
   clearSessionCookie,
@@ -57,6 +67,7 @@ import {
 } from './security/totp'
 import {
   assertStrongAdminSecret,
+  assertStrongPassword,
   countUsers,
   createUser,
   deleteUser,
@@ -178,6 +189,26 @@ async function requireSession(
   const session = await loadSession(env.CONFIG, sessionId)
   if (!session) {
     return { ok: false, response: unauthorized(request, env) }
+  }
+  const user = await getUser(env.CONFIG, session.email)
+  const userVersion = user?.passwordVersion ?? 0
+  const sessionVersion = session.passwordVersion ?? 0
+  if (!user || sessionVersion !== userVersion) {
+    await revokeSession(env.CONFIG, session.id)
+    await appendAudit(
+      env.CONFIG,
+      request,
+      'logout',
+      'password changed / session revoked',
+    )
+    return {
+      ok: false,
+      response: unauthorized(
+        request,
+        env,
+        'Session expired after a password change. Sign in again.',
+      ),
+    }
   }
   if (bindSessionIp(env) && session.ip && session.ip !== 'unknown') {
     const ip = clientIp(request)
@@ -417,7 +448,13 @@ async function issueSessionResponse(
   totpEnabled: boolean,
   message?: string,
 ): Promise<Response> {
-  const session = await createSession(env.CONFIG, request, email)
+  const user = await getUser(env.CONFIG, email)
+  const session = await createSession(
+    env.CONFIG,
+    request,
+    email,
+    user?.passwordVersion ?? 0,
+  )
   const value = await signCookieValue(session.id, signingSecret(env))
   const cookieOpts = cookieOptions(request, env.COOKIE_SAMESITE, isPublicInternet(env))
   return json(
@@ -753,6 +790,139 @@ export default {
           200,
           { 'Set-Cookie': clearSessionCookie(cookieOpts) },
         )
+      }
+
+      if (path === '/api/auth/forgot-password' && request.method === 'POST') {
+        const sentMessage =
+          'If an account exists for that email, a password reset link has been sent.'
+        const waitMessage =
+          'Please wait before requesting another reset link. Check your inbox (and spam) for the previous email.'
+
+        const rate = await assertForgotPasswordRateLimit(env.CONFIG, request)
+        if (!rate.ok) {
+          return json(
+            request,
+            env,
+            {
+              error: `Too many password reset requests. Try again in ${rate.retryAfterSec}s.`,
+              retryAfterSeconds: rate.retryAfterSec,
+            },
+            429,
+          )
+        }
+
+        const body = (await request.json().catch(() => ({}))) as {
+          email?: string
+        }
+        const email = normalizeEmail(String(body.email || ''))
+        if (!email || !isValidEmail(email)) {
+          return json(request, env, { error: 'Email is required.' }, 400)
+        }
+
+        const cooldownSec = resetCooldownSeconds()
+        const remainingMs = await cooldownRemainingMs(env.CONFIG, email)
+        if (remainingMs > 0) {
+          const retryAfterSeconds = Math.ceil(remainingMs / 1000)
+          await appendAudit(
+            env.CONFIG,
+            request,
+            'password_reset_requested',
+            `cooldown_${retryAfterSeconds}s ${email}`,
+          )
+          return json(
+            request,
+            env,
+            { error: waitMessage, retryAfterSeconds },
+            429,
+          )
+        }
+
+        const user = await getUser(env.CONFIG, email)
+        if (!user) {
+          await markResetCooldown(env.CONFIG, email)
+          await appendAudit(
+            env.CONFIG,
+            request,
+            'password_reset_requested',
+            `unknown_email ${email}`,
+          )
+          return json(request, env, {
+            ok: true,
+            message: sentMessage,
+            retryAfterSeconds: cooldownSec,
+          })
+        }
+
+        const { token } = await createPasswordResetToken(env.CONFIG, user.email)
+        const resetUrl = buildResetUrl(env, token)
+        const delivery = await sendPasswordResetEmail(env, {
+          to: user.email,
+          resetUrl,
+        })
+        await markResetCooldown(env.CONFIG, user.email)
+        await appendAudit(
+          env.CONFIG,
+          request,
+          'password_reset_requested',
+          `${user.email} ${delivery.sent ? 'email_sent' : 'email_logged'}`,
+        )
+        return json(request, env, {
+          ok: true,
+          message: sentMessage,
+          retryAfterSeconds: cooldownSec,
+        })
+      }
+
+      if (path === '/api/auth/reset-password' && request.method === 'POST') {
+        const body = (await request.json().catch(() => ({}))) as {
+          token?: string
+          password?: string
+        }
+        const token = String(body.token || '').trim()
+        const password = String(body.password || '')
+        if (!token) {
+          return json(request, env, { error: 'Reset token is required.' }, 400)
+        }
+        try {
+          // Validate strength before consuming the one-time token.
+          assertStrongPassword(password)
+          const email = await consumePasswordResetToken(env.CONFIG, token)
+          if (!email) {
+            await appendAudit(
+              env.CONFIG,
+              request,
+              'password_reset_failed',
+              'invalid_or_expired_token',
+            )
+            return json(
+              request,
+              env,
+              {
+                error:
+                  'This reset link is invalid or has expired. Request a new one.',
+              },
+              400,
+            )
+          }
+          await setUserPassword(env.CONFIG, email, password)
+          await appendAudit(
+            env.CONFIG,
+            request,
+            'password_reset_success',
+            email,
+          )
+          return json(request, env, {
+            ok: true,
+            message: 'Password updated. You can sign in with your new password.',
+          })
+        } catch (error) {
+          return json(
+            request,
+            env,
+            { error: error instanceof Error ? error.message : String(error) },
+            400,
+          )
+        }
       }
 
       if (path === '/api/auth/me' && request.method === 'GET') {

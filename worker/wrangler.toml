@@ -25,6 +25,9 @@ TIMEZONE = "Asia/Manila"
 # Secrets (set via CLI — never commit):
 #   npx wrangler secret put CLOUDFLARE_API_TOKEN
 #   npx wrangler secret put ADMIN_SECRET
+#   npx wrangler secret put SMTP_PASS
+# Optional vars/secrets for forgot-password email:
+#   APP_URL, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_FROM
 # ADMIN_SECRET must be 16+ chars and not a placeholder when PUBLIC_INTERNET=true
 #
 # Token least privilege (recommended):
