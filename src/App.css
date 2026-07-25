@@ -254,11 +254,26 @@ a {
   background: #4a5360;
 }
 
-.login-top-actions {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  z-index: 2;
+.login-theme-row {
+  display: flex;
+  justify-content: flex-start;
+  margin: 0 0 0.25rem;
+}
+
+.login-theme-row .theme-toggle {
+  width: 100%;
+}
+
+.login-theme-row .theme-toggle-track {
+  width: 100%;
+}
+
+.login-shell .login-theme {
+  width: 100%;
+}
+
+.login-shell .login-theme .theme-toggle-track {
+  width: 100%;
 }
 
 .hint,
@@ -296,6 +311,20 @@ a {
 .auth-alt-btn {
   width: 100%;
   margin-top: 0.15rem;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--clock);
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.35rem;
+  text-align: center;
+}
+
+.auth-alt-btn:hover {
+  text-decoration: underline;
+  color: var(--accent-hover);
 }
 
 /* ——— Atmosphere ——— */
@@ -342,54 +371,124 @@ a {
   min-height: 100vh;
   overflow: hidden;
   display: grid;
-  place-items: center;
-  padding: 2rem 1.25rem;
+  grid-template-rows: 1fr auto;
+  align-items: center;
+  justify-items: center;
+  padding: 2rem 1.25rem 0;
+}
+
+.login-page .app-footer {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  justify-self: stretch;
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+  padding: 0.9rem clamp(1rem, 3vw, 2rem) 1.2rem;
+  text-align: right;
 }
 
 .login-shell {
   position: relative;
   z-index: 1;
-  width: min(420px, 100%);
+  width: min(440px, 100%);
   display: grid;
-  gap: 1.75rem;
+  gap: 1.15rem;
+  padding: 1.75rem 1.6rem 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
   animation: rise-in 600ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.login-brand .brand-mark {
+.login-shell::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  border-radius: 16px 16px 0 0;
+  background: var(--accent);
+}
+
+.login-brand {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.login-title {
   margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(2.8rem, 8vw, 3.8rem);
+  font-size: 1.85rem;
   font-weight: 800;
-  letter-spacing: -0.05em;
-  line-height: 0.9;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  color: var(--text);
 }
 
 .login-lede {
-  margin: 0.85rem 0 0;
+  margin: 0;
   color: var(--muted);
-  line-height: 1.5;
-  max-width: 34ch;
+  font-size: 0.95rem;
+  line-height: 1.45;
 }
 
 .login-form {
   display: grid;
   gap: 1rem;
-  padding: 1.35rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.login-form .field > span {
+  font-weight: 700;
+  color: var(--text);
+  font-size: 0.9rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.login-form input {
+  min-height: 2.75rem;
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface-2);
 }
 
 .token-row {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 0.4rem;
+  align-items: stretch;
+}
+
+.password-reveal-btn {
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  padding-inline: 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.password-reveal-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover-fill);
 }
 
 .login-submit {
-  margin-top: 0.25rem;
+  margin-top: 0.15rem;
   width: 100%;
+  min-height: 2.85rem;
+  border-radius: 10px;
+  font-size: 0.98rem;
+  box-shadow: 0 6px 16px rgba(var(--accent-rgb), 0.22);
 }
 
 /* ——— App shell ——— */

@@ -7,7 +7,6 @@ import { PhilTimeClock } from './components/PhilTimeClock'
 import { ResultsPanel } from './components/ResultsPanel'
 import { ScheduleEditor } from './components/ScheduleEditor'
 import { SecurityPanel } from './components/SecurityPanel'
-import { ThemeToggle } from './components/ThemeToggle'
 import {
   applyStream,
   fetchConfig,
@@ -491,7 +490,6 @@ export default function App() {
           </div>
           <div className="command-actions">
             <span className="worker-chip">{session.email}</span>
-            <ThemeToggle compact />
             <button
               type="button"
               className="ghost-btn"
@@ -550,7 +548,6 @@ export default function App() {
           <span className="worker-chip" title={session.email}>
             {session.email}
           </span>
-          <ThemeToggle compact />
           <button
             type="button"
             className="ghost-btn"

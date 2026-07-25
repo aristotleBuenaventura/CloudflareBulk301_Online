@@ -10,7 +10,6 @@ import {
   type ManagedUser,
   type WorkerSession,
 } from '../lib/workerApi'
-import { ThemeToggle } from './ThemeToggle'
 
 interface AdminDashboardProps {
   session: WorkerSession
@@ -324,7 +323,6 @@ export function AdminDashboard({
           <span className="worker-chip" title={session.email}>
             {session.email}
           </span>
-          <ThemeToggle compact />
           <button
             type="button"
             className="ghost-btn"

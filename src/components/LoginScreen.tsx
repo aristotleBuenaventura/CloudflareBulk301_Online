@@ -189,25 +189,32 @@ export function LoginScreen({
     onClearResetToken?.()
   }
 
+  const title = needs2fa
+    ? '2FA'
+    : mode === 'forgot'
+      ? 'Forgot password'
+      : mode === 'reset'
+        ? 'Reset password'
+        : 'Login'
+
+  const lede = needs2fa
+    ? 'Enter the 6-digit code from your authenticator app.'
+    : mode === 'forgot'
+      ? 'Enter your account email and we’ll send a reset link if it exists.'
+      : mode === 'reset'
+        ? 'Choose a new password for your account.'
+        : 'Sign in to access Bulk301.'
+
   return (
     <div className="login-page">
       <div className="login-atmosphere" aria-hidden="true" />
-      <div className="login-top-actions">
-        <ThemeToggle compact />
-      </div>
       <div className="login-shell">
         <header className="login-brand">
-          <p className="brand-mark">Bulk301</p>
-          <p className="login-lede">
-            {needs2fa
-              ? 'Enter the 6-digit code from your authenticator app.'
-              : mode === 'forgot'
-                ? 'Enter your account email and we’ll send a reset link if it exists.'
-                : mode === 'reset'
-                  ? 'Choose a new password for your account.'
-                  : 'Sign in with email and password. New accounts must set up 2FA next.'}
-          </p>
+          <h1 className="login-title">{title}</h1>
+          <p className="login-lede">{lede}</p>
         </header>
+
+        <ThemeToggle compact={false} className="login-theme" />
 
         {needs2fa ? (
           <form className="login-form" onSubmit={handle2faSubmit}>
@@ -232,6 +239,13 @@ export function LoginScreen({
               disabled={loading || code.trim().length < 6}
             >
               {loading ? 'Verifying…' : 'Verify 2FA'}
+            </button>
+            <button
+              type="button"
+              className="auth-alt-btn"
+              onClick={goLogin}
+            >
+              Back to login
             </button>
           </form>
         ) : mode === 'forgot' ? (
@@ -268,11 +282,7 @@ export function LoginScreen({
                   ? `Wait ${formatWait(cooldownLeft)}`
                   : 'Send reset link'}
             </button>
-            <button
-              type="button"
-              className="ghost-btn auth-alt-btn"
-              onClick={goLogin}
-            >
+            <button type="button" className="auth-alt-btn" onClick={goLogin}>
               Back to login
             </button>
           </form>
@@ -334,11 +344,7 @@ export function LoginScreen({
                 </button>
               </>
             )}
-            <button
-              type="button"
-              className="ghost-btn auth-alt-btn"
-              onClick={goLogin}
-            >
+            <button type="button" className="auth-alt-btn" onClick={goLogin}>
               Back to login
             </button>
           </form>
@@ -373,7 +379,7 @@ export function LoginScreen({
                 />
                 <button
                   type="button"
-                  className="ghost-btn"
+                  className="ghost-btn password-reveal-btn"
                   onClick={() => setShowPassword((v) => !v)}
                 >
                   {showPassword ? 'Hide' : 'Show'}
@@ -393,7 +399,7 @@ export function LoginScreen({
 
             <button
               type="button"
-              className="ghost-btn auth-alt-btn"
+              className="auth-alt-btn"
               onClick={() => {
                 setMode('forgot')
                 setLocalError(null)
@@ -405,6 +411,9 @@ export function LoginScreen({
           </form>
         )}
       </div>
+      <footer className="app-footer">
+        <span>Developed by Aris</span>
+      </footer>
     </div>
   )
 }
