@@ -20,6 +20,9 @@ export interface ManagedUser {
   totpEnabled: boolean
   createdAt: string
   updatedAt: string
+  online?: boolean
+  lastSeenAt?: string | null
+  lastSeenIp?: string | null
 }
 
 export interface ConfigResponse {
@@ -152,6 +155,13 @@ export async function verify2fa(
 
 export async function logoutWorker(session: WorkerSession): Promise<void> {
   await apiFetch(session.workerUrl, '/api/auth/logout', { method: 'POST' })
+}
+
+export async function heartbeatWorker(session: WorkerSession): Promise<void> {
+  const response = await apiFetch(session.workerUrl, '/api/auth/heartbeat', {
+    method: 'POST',
+  })
+  if (!response.ok) throw new Error(await parseError(response))
 }
 
 export async function fetchSessionMe(workerUrl: string): Promise<{

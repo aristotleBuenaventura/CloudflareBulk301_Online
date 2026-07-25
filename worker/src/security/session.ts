@@ -10,6 +10,8 @@ export const COOKIE_NAME = 'bulk301_session'
 export const IDLE_TIMEOUT_MS = 30 * 60 * 1000
 export const SESSION_TTL_MS = 12 * 60 * 60 * 1000
 export const CHALLENGE_TTL_MS = 5 * 60 * 1000
+/** How long a user stays "online" after last activity (heartbeat / API). */
+export const PRESENCE_TTL_SEC = 90
 
 export interface SessionRecord {
   id: string
@@ -29,12 +31,71 @@ export interface ChallengeRecord {
   ip: string
 }
 
+export interface PresenceRecord {
+  email: string
+  lastSeenAt: number
+  ip: string
+}
+
 function sessionKey(id: string) {
   return `session:${id}`
 }
 
 function challengeKey(id: string) {
   return `challenge:${id}`
+}
+
+function presenceKey(email: string) {
+  return `presence:${email.trim().toLowerCase()}`
+}
+
+async function bumpPresence(
+  kv: KVNamespace,
+  email: string,
+  ip: string,
+  lastSeenAt = Date.now(),
+): Promise<void> {
+  const normalized = email.trim().toLowerCase()
+  if (!normalized) return
+  const record: PresenceRecord = {
+    email: normalized,
+    lastSeenAt,
+    ip,
+  }
+  await kv.put(presenceKey(normalized), JSON.stringify(record), {
+    expirationTtl: PRESENCE_TTL_SEC,
+  })
+}
+
+export async function listOnlinePresence(
+  kv: KVNamespace,
+): Promise<PresenceRecord[]> {
+  const online: PresenceRecord[] = []
+  let cursor: string | undefined
+  do {
+    const page = await kv.list({
+      prefix: 'presence:',
+      cursor,
+      limit: 200,
+    })
+    const values = await Promise.all(
+      page.keys.map(async (key) => {
+        const raw = await kv.get(key.name)
+        if (!raw) return null
+        try {
+          return JSON.parse(raw) as PresenceRecord
+        } catch {
+          return null
+        }
+      }),
+    )
+    for (const record of values) {
+      if (record?.email) online.push(record)
+    }
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
+
+  return online.sort((a, b) => b.lastSeenAt - a.lastSeenAt)
 }
 
 export async function createSession(
@@ -57,6 +118,7 @@ export async function createSession(
   await kv.put(sessionKey(id), JSON.stringify(record), {
     expirationTtl: Math.ceil(SESSION_TTL_MS / 1000),
   })
+  await bumpPresence(kv, email, record.ip, now)
   return record
 }
 
@@ -90,9 +152,12 @@ export async function touchSession(
   session: SessionRecord,
 ): Promise<SessionRecord> {
   const next = { ...session, lastSeenAt: Date.now() }
-  await kv.put(sessionKey(session.id), JSON.stringify(next), {
-    expirationTtl: Math.ceil(SESSION_TTL_MS / 1000),
-  })
+  await Promise.all([
+    kv.put(sessionKey(session.id), JSON.stringify(next), {
+      expirationTtl: Math.ceil(SESSION_TTL_MS / 1000),
+    }),
+    bumpPresence(kv, next.email, next.ip, next.lastSeenAt),
+  ])
   return next
 }
 

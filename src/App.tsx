@@ -12,6 +12,7 @@ import {
   applyStream,
   fetchConfig,
   fetchSessionMe,
+  heartbeatWorker,
   loginWithCredentials,
   logoutWorker,
   saveConfig,
@@ -334,6 +335,27 @@ export default function App() {
     setProgress(null)
     setLiveRun(false)
     setChallengeToken(null)
+  }, [session])
+
+  // Keep presence fresh while the tab is open (admin online list).
+  useEffect(() => {
+    if (!session) return
+    let cancelled = false
+    const ping = async () => {
+      try {
+        await heartbeatWorker(session)
+      } catch {
+        /* session expiry handled by other calls */
+      }
+    }
+    void ping()
+    const id = window.setInterval(() => {
+      if (!cancelled) void ping()
+    }, 30_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
   }, [session])
 
   const updateSchedule = useCallback((key: DayKey, targetUrl: string) => {

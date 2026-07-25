@@ -51,6 +51,7 @@ import {
   createChallenge,
   createSession,
   IDLE_TIMEOUT_MS,
+  listOnlinePresence,
   loadSession,
   parseCookieValue,
   readCookie,
@@ -944,6 +945,16 @@ export default {
         })
       }
 
+      if (path === '/api/auth/heartbeat' && request.method === 'POST') {
+        const auth = await requireSession(request, env)
+        if (!auth.ok) return auth.response
+        return json(request, env, {
+          ok: true,
+          email: auth.session.email,
+          lastSeenAt: new Date(auth.session.lastSeenAt).toISOString(),
+        })
+      }
+
       if (path === '/api/auth/2fa/setup/start' && request.method === 'POST') {
         const auth = await requireSession(request, env)
         if (!auth.ok) return auth.response
@@ -1051,8 +1062,29 @@ export default {
       if (path === '/api/admin/users' && request.method === 'GET') {
         const auth = await requireSuperadmin(request, env)
         if (!auth.ok) return auth.response
-        const users = await listUsers(env.CONFIG)
-        return json(request, env, { ok: true, users })
+        const [users, presence] = await Promise.all([
+          listUsers(env.CONFIG),
+          listOnlinePresence(env.CONFIG),
+        ])
+        const onlineByEmail = new Map(
+          presence.map((p) => [p.email.trim().toLowerCase(), p]),
+        )
+        const enriched = users.map((user) => {
+          const online = onlineByEmail.get(user.email.trim().toLowerCase())
+          return {
+            ...user,
+            online: Boolean(online),
+            lastSeenAt: online
+              ? new Date(online.lastSeenAt).toISOString()
+              : null,
+            lastSeenIp: online?.ip || null,
+          }
+        })
+        return json(request, env, {
+          ok: true,
+          users: enriched,
+          onlineCount: presence.length,
+        })
       }
 
       if (path === '/api/admin/users' && request.method === 'POST') {

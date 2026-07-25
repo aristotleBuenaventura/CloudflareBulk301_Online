@@ -22,6 +22,19 @@ function formatWhen(value: string) {
   }
 }
 
+function formatRelative(value: string | null | undefined) {
+  if (!value) return null
+  try {
+    const ms = Date.now() - new Date(value).getTime()
+    if (ms < 15_000) return 'just now'
+    if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s ago`
+    if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`
+    return formatWhen(value)
+  } catch {
+    return value
+  }
+}
+
 function roleLabel(role: string) {
   return role === 'superadmin' ? 'Superadmin' : 'Admin'
 }
@@ -141,6 +154,13 @@ export function AdminDashboard({
   const adminCount = users.filter((u) => u.role === 'admin').length
   const superCount = users.filter((u) => u.role === 'superadmin').length
   const totpCount = users.filter((u) => u.totpEnabled).length
+  const onlineCount = users.filter((u) => u.online).length
+  const sortedUsers = [...users].sort((a, b) => {
+    if (Boolean(a.online) !== Boolean(b.online)) {
+      return a.online ? -1 : 1
+    }
+    return a.email.localeCompare(b.email)
+  })
 
   return (
     <div className="app-shell admin-shell">
@@ -175,11 +195,15 @@ export function AdminDashboard({
 
       <main className="workspace admin-main">
         <section className="admin-stats">
+          <div className="admin-stat section accent">
+            <span className="admin-stat-label">Online now</span>
+            <strong>{onlineCount}</strong>
+          </div>
           <div className="admin-stat section">
             <span className="admin-stat-label">Accounts</span>
             <strong>{users.length}</strong>
           </div>
-          <div className="admin-stat section accent">
+          <div className="admin-stat section">
             <span className="admin-stat-label">With 2FA</span>
             <strong>{totpCount}</strong>
           </div>
@@ -246,7 +270,10 @@ export function AdminDashboard({
             <div className="section-head">
               <div>
                 <h2>Accounts</h2>
-                <p>List refreshes every 15 seconds.</p>
+                <p>
+                  Online status refreshes every 15 seconds
+                  {onlineCount > 0 ? ` · ${onlineCount} online` : ''}.
+                </p>
               </div>
               <button
                 type="button"
@@ -264,21 +291,29 @@ export function AdminDashboard({
               <div className="admin-empty">No accounts yet.</div>
             ) : (
               <div className="admin-account-list">
-                {users.map((account) => {
+                {sortedUsers.map((account) => {
                   const isSelf =
                     account.email === (session.email || '').toLowerCase()
                   const roleClass =
                     account.role === 'superadmin' ? 'superadmin' : 'admin'
+                  const seenLabel = formatRelative(account.lastSeenAt)
 
                   return (
                     <article
                       key={account.email}
-                      className="admin-account-card"
+                      className={`admin-account-card${account.online ? ' is-online' : ''}`}
                     >
                       <div className="admin-account-top">
                         <div className="admin-account-identity">
-                          <span className={`admin-avatar tone-${roleClass}`}>
+                          <span
+                            className={`admin-avatar tone-${roleClass}${account.online ? ' is-online' : ''}`}
+                          >
                             {initials(account.email)}
+                            <span
+                              className={`presence-pip ${account.online ? 'is-online' : 'is-offline'}`}
+                              title={account.online ? 'Online' : 'Offline'}
+                              aria-hidden="true"
+                            />
                           </span>
                           <div>
                             <div className="admin-account-name">
@@ -288,11 +323,23 @@ export function AdminDashboard({
                               ) : null}
                             </div>
                             <span className="admin-account-meta-line">
-                              Updated {formatWhen(account.updatedAt)}
+                              {account.online
+                                ? `Online${seenLabel ? ` · ${seenLabel}` : ''}${
+                                    account.lastSeenIp &&
+                                    account.lastSeenIp !== 'unknown'
+                                      ? ` · ${account.lastSeenIp}`
+                                      : ''
+                                  }`
+                                : `Offline · Updated ${formatWhen(account.updatedAt)}`}
                             </span>
                           </div>
                         </div>
                         <div className="admin-account-meta">
+                          <span
+                            className={`status-dot ${account.online ? 'is-live' : 'is-offline'}`}
+                          >
+                            {account.online ? 'Online' : 'Offline'}
+                          </span>
                           <span className={`role-badge role-${roleClass}`}>
                             {roleLabel(account.role)}
                           </span>
