@@ -19,23 +19,19 @@ export function ResultsPanel({
   const pending = results.filter((r) => r.status === 'pending').length
 
   return (
-    <section className="panel results-panel">
-      <header className="panel-header">
+    <section className={`section results-section ${live ? 'is-live' : ''}`}>
+      <div className="section-head">
         <div>
-          <h2>{live ? 'Live 301 progress' : 'Results'}</h2>
-          <p>
-            {live
-              ? 'Updating as each old domain is redirected.'
-              : 'Per-domain outcome from the latest apply run.'}
-          </p>
+          <h2>{live ? 'Live apply' : 'Last results'}</h2>
+          <p>{live ? 'Streaming from Worker' : 'Latest run'}</p>
         </div>
         <div className="result-counts">
-          <span className="ok">{success} ok</span>
-          <span className="skip">{skipped} skipped</span>
-          <span className="fail">{failed} failed</span>
-          {pending > 0 && <span className="pending">{pending} pending</span>}
+          <span className="ok">{success}</span>
+          <span className="skip">{skipped}</span>
+          <span className="fail">{failed}</span>
+          {pending > 0 && <span className="pending">{pending}</span>}
         </div>
-      </header>
+      </div>
 
       <ul className="results-list">
         {results.map((result) => {
@@ -55,7 +51,7 @@ export function ResultsPanel({
                 <strong>{result.domain}</strong>
                 <span className="status-tag">
                   {isCurrent && result.status === 'pending'
-                    ? 'running…'
+                    ? 'running'
                     : result.status}
                 </span>
               </div>

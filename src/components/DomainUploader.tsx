@@ -48,16 +48,16 @@ export function DomainUploader({
   }
 
   return (
-    <section className="panel domains-panel">
-      <header className="panel-header">
+    <section className="section domains-section">
+      <div className="section-head">
         <div>
           <h2>Old domains</h2>
-          <p>Upload a CSV or paste domains that should redirect to the scheduled target.</p>
+          <p>CSV upload or paste — these redirect to today’s target</p>
         </div>
-        <span className="count-pill">{domains.length} domains</span>
-      </header>
+        <span className="count-badge">{domains.length}</span>
+      </div>
 
-      <div className="domains-actions">
+      <div className="domains-toolbar">
         <button
           type="button"
           className="secondary-btn"
@@ -82,7 +82,7 @@ export function DomainUploader({
             setFileName(null)
           }}
         >
-          Clear all
+          Clear
         </button>
         {fileName && <span className="file-chip">{fileName}</span>}
       </div>
@@ -91,28 +91,32 @@ export function DomainUploader({
         <textarea
           value={manual}
           onChange={(e) => setManual(e.target.value)}
-          placeholder={'oldsite1.com\noldsite2.com\nwww.oldsite3.com'}
-          rows={4}
+          placeholder={'oldsite1.com\noldsite2.com'}
+          rows={3}
           disabled={disabled}
           spellCheck={false}
         />
-        <button type="submit" className="secondary-btn" disabled={disabled || !manual.trim()}>
-          Add domains
+        <button
+          type="submit"
+          className="secondary-btn"
+          disabled={disabled || !manual.trim()}
+        >
+          Add
         </button>
       </form>
 
       {domains.length > 0 && (
-        <ul className="domain-chips">
+        <ul className="domain-list">
           {domains.map((domain) => (
             <li key={domain}>
-              <span>{domain}</span>
+              <span className="domain-name">{domain}</span>
               <button
                 type="button"
                 aria-label={`Remove ${domain}`}
                 disabled={disabled}
                 onClick={() => removeDomain(domain)}
               >
-                ×
+                Remove
               </button>
             </li>
           ))}

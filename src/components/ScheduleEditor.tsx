@@ -21,15 +21,15 @@ export function ScheduleEditor({
   const activeKey = dayKeyFromDate(highlightDate)
 
   return (
-    <section className="panel schedule-panel">
-      <header className="panel-header">
+    <section className="section schedule-section">
+      <div className="section-head">
         <div>
-          <h2>Weekly target schedule</h2>
-          <p>Edit a target URL, then press Enter to save. 301s only run on schedule.</p>
+          <h2>Weekly targets</h2>
+          <p>Enter to save · 301s run on schedule only</p>
         </div>
-        {dirty && <span className="count-pill">Unsaved — press Enter</span>}
-        {saving && <span className="count-pill">Saving…</span>}
-      </header>
+        {dirty && <span className="status-dot is-warn">Unsaved</span>}
+        {saving && <span className="status-dot">Saving…</span>}
+      </div>
 
       <div className="schedule-list" role="list">
         {schedule.map((day) => {
@@ -50,7 +50,6 @@ export function ScheduleEditor({
             >
               <div className="day-label">
                 <span className="day-short">{day.short}</span>
-                <span className="day-full">{day.label}</span>
                 {isActive && <span className="day-badge">Today</span>}
               </div>
               <input

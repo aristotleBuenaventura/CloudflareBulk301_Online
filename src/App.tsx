@@ -316,23 +316,34 @@ export default function App() {
     )
   }
 
+  const runState = applying ? 'running' : dirty ? 'dirty' : 'idle'
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell is-${runState}`}>
       <div className="app-atmosphere" aria-hidden="true" />
 
-      <header className="topbar">
-        <div className="topbar-brand">
+      <header className="command-bar">
+        <div className="command-brand">
           <p className="brand-mark">Bulk301</p>
-          <span className="topbar-sub">Worker scheduler</span>
+          <span
+            className={`run-pill is-${runState}`}
+            title={session.workerUrl}
+          >
+            {applying ? 'Applying 301s' : dirty ? 'Unsaved' : 'Armed'}
+          </span>
         </div>
-        <div className="topbar-meta">
-          <span className="account-chip">
-            {applying
-              ? '301 apply running… · '
-              : dirty
-                ? 'Unsaved changes · '
-                : ''}
-            {session.workerUrl}
+
+        <PhilTimeClock
+          compact
+          timeZone={timezone || 'Asia/Manila'}
+          applyTime={applyTime}
+          autoWatchActive={!dirty && !applying}
+          scheduleStatus={scheduleStatus}
+        />
+
+        <div className="command-actions">
+          <span className="worker-chip" title={session.workerUrl}>
+            {session.workerUrl.replace(/^https?:\/\//, '')}
           </span>
           <button type="button" className="ghost-btn" onClick={logout}>
             Sign out
@@ -341,65 +352,47 @@ export default function App() {
       </header>
 
       <main className="workspace">
-        <div className="workspace-intro">
-          <h1>Redirect schedule workspace</h1>
-          <p>
-            When Philippine time hits your schedule, all domains get 301s in
-            parallel on the Worker (25 Cloudflare calls in flight; live stream
-            updates this UI).
-          </p>
+        <div className="workspace-grid">
+          <ScheduleEditor
+            schedule={schedule}
+            highlightDate={highlightDate}
+            dirty={dirty}
+            saving={saving}
+            onChange={updateSchedule}
+            onSave={() => void handleSave()}
+          />
+          <ApplyControls
+            schedule={schedule}
+            wildcard={wildcard}
+            onWildcardChange={(v) => {
+              setWildcard(v)
+              setDirty(true)
+            }}
+            timezone={timezone}
+            onTimezoneChange={(v) => {
+              setTimezone(v)
+              setDirty(true)
+            }}
+            applyTime={applyTime}
+            onApplyTimeChange={(v) => {
+              setApplyTime(v)
+              setDirty(true)
+            }}
+            applying={applying}
+            saving={saving}
+            onSave={() => void handleSave()}
+            todayTarget={todayTarget}
+            lastRun={lastRun}
+            progressLabel={statusMessage}
+            progress={progress}
+          />
         </div>
 
-        <div className="workspace-grid">
-          <div className="workspace-main">
-            <PhilTimeClock
-              timeZone={timezone || 'Asia/Manila'}
-              applyTime={applyTime}
-              autoWatchActive={!dirty && !applying}
-              scheduleStatus={scheduleStatus}
-            />
-            <ScheduleEditor
-              schedule={schedule}
-              highlightDate={highlightDate}
-              dirty={dirty}
-              saving={saving}
-              onChange={updateSchedule}
-              onSave={() => void handleSave()}
-            />
-          </div>
-          <div className="workspace-side">
-            <ApplyControls
-              schedule={schedule}
-              wildcard={wildcard}
-              onWildcardChange={(v) => {
-                setWildcard(v)
-                setDirty(true)
-              }}
-              timezone={timezone}
-              onTimezoneChange={(v) => {
-                setTimezone(v)
-                setDirty(true)
-              }}
-              applyTime={applyTime}
-              onApplyTimeChange={(v) => {
-                setApplyTime(v)
-                setDirty(true)
-              }}
-              applying={applying}
-              saving={saving}
-              onSave={() => void handleSave()}
-              todayTarget={todayTarget}
-              lastRun={lastRun}
-              progressLabel={statusMessage}
-              progress={progress}
-            />
-            <DomainUploader
-              domains={domains}
-              onChange={handleDomainsChange}
-              disabled={applying || saving}
-            />
-          </div>
-        </div>
+        <DomainUploader
+          domains={domains}
+          onChange={handleDomainsChange}
+          disabled={applying || saving}
+        />
 
         <ResultsPanel
           results={results}
@@ -410,7 +403,7 @@ export default function App() {
 
       <footer className="app-footer">
         <span>Developed by Aris</span>
-        <span>301s run on schedule only</span>
+        <span>Schedule-only · 25 parallel</span>
       </footer>
     </div>
   )

@@ -1,5 +1,5 @@
 import type { ApplyRunSummary, DaySchedule } from '../types'
-import { dayKeyFromDate, getTargetForDate } from '../lib/schedule'
+import { getTargetForDate } from '../lib/schedule'
 
 interface ApplyControlsProps {
   schedule: DaySchedule[]
@@ -36,21 +36,27 @@ export function ApplyControls({
 }: ApplyControlsProps) {
   const today = new Date()
   const targetDay = getTargetForDate(schedule, today)
-  const dayKey = dayKeyFromDate(today)
 
   return (
-    <section className="panel apply-panel">
-      <header className="panel-header">
+    <section className="section apply-section">
+      <div className="section-head">
         <div>
-          <h2>Daily schedule time</h2>
-          <p>
-            Set when 301s should run. Saving here only stores settings — it does
-            not apply redirects. Redirects run only when this time is reached.
-          </p>
+          <h2>When it runs</h2>
+          <p>Exact minute · Asia/Manila by default</p>
         </div>
-      </header>
+      </div>
 
-      <div className="apply-grid apply-grid-2">
+      <div className="apply-fields">
+        <label className="field">
+          <span>Time</span>
+          <input
+            type="time"
+            value={applyTime}
+            onChange={(e) => onApplyTimeChange(e.target.value)}
+            disabled={applying || saving}
+          />
+        </label>
+
         <label className="field">
           <span>Timezone</span>
           <input
@@ -62,55 +68,32 @@ export function ApplyControls({
             spellCheck={false}
           />
         </label>
-
-        <label className="field">
-          <span>Daily apply time</span>
-          <input
-            type="time"
-            value={applyTime}
-            onChange={(e) => onApplyTimeChange(e.target.value)}
-            disabled={applying || saving}
-          />
-        </label>
-
-        <label className="checkbox-field apply-span-2">
-          <input
-            type="checkbox"
-            checked={wildcard}
-            onChange={(e) => onWildcardChange(e.target.checked)}
-            disabled={applying || saving}
-          />
-          <span>Preserve path &amp; query (wildcard)</span>
-        </label>
       </div>
 
-      <div className="target-preview">
-        <div>
-          <span className="preview-label">Today ({targetDay.label})</span>
-          <strong className="preview-url">
-            {todayTarget || targetDay.targetUrl || '—'}
-          </strong>
-        </div>
-        <div>
-          <span className="preview-label">Auto-runs at</span>
-          <strong>
-            {applyTime || '00:00'} · {timezone || 'Asia/Manila'}
-          </strong>
-        </div>
-        <div>
-          <span className="preview-label">Schedule key</span>
-          <strong>{dayKey}</strong>
-        </div>
+      <label className="checkbox-field">
+        <input
+          type="checkbox"
+          checked={wildcard}
+          onChange={(e) => onWildcardChange(e.target.checked)}
+          disabled={applying || saving}
+        />
+        <span>Preserve path &amp; query</span>
+      </label>
+
+      <div className="today-block">
+        <span className="eyebrow">Today → {targetDay.label}</span>
+        <strong className="today-url">
+          {todayTarget || targetDay.targetUrl || '—'}
+        </strong>
       </div>
 
       {lastRun && (
-        <div className="countdown-banner" role="status">
+        <div className="last-run" role="status">
           <span>
-            Last run · {new Date(lastRun.ranAt).toLocaleString()} ·{' '}
-            {lastRun.dayKey} → {lastRun.targetUrl}
+            Last · {new Date(lastRun.ranAt).toLocaleString()}
           </span>
           <strong>
-            {lastRun.success} ok / {lastRun.failed} fail
+            {lastRun.success} ok · {lastRun.failed} fail
           </strong>
         </div>
       )}
@@ -136,26 +119,19 @@ export function ApplyControls({
       )}
 
       {progressLabel && (
-        <p className="hint" role="status">
+        <p className="status-line" role="status">
           {progressLabel}
         </p>
       )}
 
-      <div className="apply-actions">
-        <button
-          type="button"
-          className="secondary-btn"
-          disabled={applying || saving}
-          onClick={onSave}
-        >
-          {saving ? 'Saving…' : 'Save schedule settings'}
-        </button>
-      </div>
-
-      <p className="hint">
-        Saving only stores settings. 301s run only at Daily apply time (exact
-        minute) — never when you save a target.
-      </p>
+      <button
+        type="button"
+        className="primary-btn apply-save"
+        disabled={applying || saving}
+        onClick={onSave}
+      >
+        {saving ? 'Saving…' : 'Save settings'}
+      </button>
     </section>
   )
 }
