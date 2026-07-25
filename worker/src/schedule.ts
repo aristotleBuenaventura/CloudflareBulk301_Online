@@ -69,8 +69,9 @@ function toMinutes(hhmm: string): number {
 }
 
 /**
- * Run once per local calendar day per applyTime+target combo.
- * Changing Daily apply time or today's target allows another auto-run today.
+ * Fire ONLY at the exact scheduled HH:MM (Philippine/local timezone), once per
+ * date+applyTime+target fingerprint. Never catch-up after the minute — so
+ * saving a new target later in the day does NOT trigger 301s.
  */
 export function shouldRunScheduledApply(
   config: AppConfig,
@@ -99,20 +100,21 @@ export function shouldRunScheduledApply(
       fingerprint,
       nowTime: currentTime,
       targetUrl,
-      reason:
-        `Already auto-applied today for ${applyTime} → ${targetUrl || '(empty)'}. ` +
-        `Set a new Daily apply time (or change today's target), then wait — or click Arm again.`,
+      reason: `Already ran today at ${applyTime} → ${targetUrl || '(empty)'}. Next run tomorrow at ${applyTime}.`,
     }
   }
 
-  if (toMinutes(currentTime) < toMinutes(applyTime)) {
+  if (currentTime !== applyTime) {
+    const waiting = toMinutes(currentTime) < toMinutes(applyTime)
     return {
       run: false,
       dateKey,
       fingerprint,
       nowTime: currentTime,
       targetUrl,
-      reason: `Waiting for ${applyTime} ${timeZone} (now ${currentTime})`,
+      reason: waiting
+        ? `Waiting for schedule ${applyTime} ${timeZone} (now ${currentTime})`
+        : `Schedule ${applyTime} already passed today (now ${currentTime}). Saved targets apply at next ${applyTime}.`,
     }
   }
 
@@ -122,7 +124,7 @@ export function shouldRunScheduledApply(
     fingerprint,
     nowTime: currentTime,
     targetUrl,
-    reason: `Due: ${applyTime} reached (now ${currentTime}) → ${targetUrl || '(empty target)'}`,
+    reason: `Schedule hit ${applyTime} → ${targetUrl || '(empty target)'}`,
   }
 }
 

@@ -197,4 +197,4 @@ export async function mapPool<T, R>(
   return results
 }
 
-export const UI_APPLY_CONCURRENCY = 15
+export const UI_APPLY_CONCURRENCY = 25

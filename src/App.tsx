@@ -366,7 +366,7 @@ export default function App() {
           <h1>Redirect schedule workspace</h1>
           <p>
             When Philippine time hits your schedule, all domains get 301s in
-            parallel (about 15 at a time) with live progress in this UI.
+            parallel (25 at a time) with live progress in this UI.
           </p>
         </div>
 

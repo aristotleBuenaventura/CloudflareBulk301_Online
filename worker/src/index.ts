@@ -271,23 +271,14 @@ export default {
           env.TIMEZONE || 'Asia/Manila',
         )
         await writeConfig(env, next)
-
-        // Re-arm auto-run when the daily time or today's target changes.
-        const prevToday = getTargetForDate(current).day.targetUrl.trim()
-        const nextToday = getTargetForDate(next).day.targetUrl.trim()
-        if (
-          next.applyTime !== current.applyTime ||
-          next.timezone !== current.timezone ||
-          prevToday !== nextToday
-        ) {
-          await env.CONFIG.delete(LAST_AUTO_KEY)
-          await env.CONFIG.delete('last_auto_date')
-        }
+        // Saving targets/time must NEVER start a 301 run. Marker stays so
+        // catch-up cannot fire; schedule only runs at exact applyTime.
         return json({ ok: true, config: next })
       }
 
       if (path === '/api/reset-auto' && request.method === 'POST') {
         if (!isAuthorized(request, env)) return unauthorized()
+        // Soft reset for debugging only — does not apply redirects.
         await env.CONFIG.delete(LAST_AUTO_KEY)
         await env.CONFIG.delete('last_auto_date')
         const due = await checkDue(env)

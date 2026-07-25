@@ -153,8 +153,8 @@ export function ApplyControls({
       </div>
 
       <p className="hint">
-        301s run only when Philippine time reaches Daily apply time. No manual
-        apply.
+        Saving only stores settings. 301s run only at Daily apply time (exact
+        minute) — never when you save a target.
       </p>
     </section>
   )

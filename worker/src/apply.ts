@@ -7,7 +7,7 @@ import { getTargetForDate } from './schedule'
 import type { AppConfig, ApplyRunSummary, DomainResult } from './types'
 
 /** How many zone redirects to create at the same time. */
-export const APPLY_CONCURRENCY = 15
+export const APPLY_CONCURRENCY = 25
 
 export async function mapPool<T, R>(
   items: T[],
