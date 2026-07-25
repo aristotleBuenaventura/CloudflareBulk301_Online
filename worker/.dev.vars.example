@@ -1,0 +1,5 @@
+# Cloudflare API token — used ONLY by the Worker (never commit real values)
+CLOUDFLARE_API_TOKEN=
+
+# Password for the React admin UI → Worker API
+ADMIN_SECRET=change-me-to-a-long-random-string

@@ -1,0 +1,21 @@
+name = "bulk301-scheduler"
+main = "src/index.ts"
+compatibility_date = "2025-07-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Check every minute. Actual apply time is editable in the UI (config.applyTime + timezone).
+[triggers]
+crons = ["* * * * *"]
+
+# Replace ids after: npm run kv:create (from worker/)
+[[kv_namespaces]]
+binding = "CONFIG"
+id = "00000000000000000000000000000000"
+preview_id = "00000000000000000000000000000001"
+
+[vars]
+TIMEZONE = "Asia/Manila"
+
+# Secrets (set via CLI — never commit):
+#   npx wrangler secret put CLOUDFLARE_API_TOKEN
+#   npx wrangler secret put ADMIN_SECRET
