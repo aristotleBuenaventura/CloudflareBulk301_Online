@@ -10,8 +10,10 @@ import {
   claimAuto,
   finishApply,
   loginToWorker,
+  mapPool,
   saveConfig,
   tickSchedule,
+  UI_APPLY_CONCURRENCY,
   type DueCheckResponse,
   type WorkerSession,
 } from './lib/workerApi'
@@ -92,43 +94,64 @@ export default function App() {
       setResults(pending)
       setProgress({ completed: 0, total: unique.length })
       setTodayTarget(opts.targetUrl)
-      setStatusMessage(`${opts.label} · 0/${unique.length}`)
-      setScheduleStatus(`${opts.label} in progress…`)
+      setStatusMessage(
+        `${opts.label} · parallel ×${Math.min(UI_APPLY_CONCURRENCY, unique.length)} · 0/${unique.length}`,
+      )
+      setScheduleStatus(
+        `${opts.label} · running ${Math.min(UI_APPLY_CONCURRENCY, unique.length)} at a time…`,
+      )
 
       if (opts.claimFingerprint) {
         await claimAuto(activeSession, opts.claimFingerprint)
       }
 
       const nextResults = [...pending]
-      for (let i = 0; i < unique.length; i++) {
-        const domain = unique[i]
-        setProgress({
-          completed: i,
-          total: unique.length,
-          currentDomain: domain,
-        })
-        setStatusMessage(
-          `${opts.label} · ${i}/${unique.length} · applying ${domain}`,
-        )
-        setScheduleStatus(`Applying 301 · ${domain}`)
+      const active = new Set<string>()
 
-        try {
-          nextResults[i] = await applyOneDomain(activeSession, domain)
-        } catch (error) {
-          nextResults[i] = {
-            domain,
-            status: 'failed',
-            message: error instanceof Error ? error.message : String(error),
+      await mapPool(
+        unique,
+        UI_APPLY_CONCURRENCY,
+        async (domain, index) => {
+          active.add(domain)
+          setProgress({
+            completed: nextResults.filter((r) => r.status !== 'pending').length,
+            total: unique.length,
+            currentDomain: `${active.size} running · ${domain}`,
+          })
+          setScheduleStatus(
+            `Parallel 301 · ${active.size} in flight · ${domain}`,
+          )
+
+          let result: DomainResult
+          try {
+            result = await applyOneDomain(activeSession, domain)
+          } catch (error) {
+            result = {
+              domain,
+              status: 'failed',
+              message: error instanceof Error ? error.message : String(error),
+            }
           }
-        }
 
-        setResults([...nextResults])
-        setProgress({
-          completed: i + 1,
-          total: unique.length,
-          currentDomain: domain,
-        })
-      }
+          active.delete(domain)
+          nextResults[index] = result
+          return result
+        },
+        (_result, _index, completed) => {
+          setResults([...nextResults])
+          setProgress({
+            completed,
+            total: unique.length,
+            currentDomain:
+              active.size > 0
+                ? `${active.size} still running`
+                : undefined,
+          })
+          setStatusMessage(
+            `${opts.label} · parallel · ${completed}/${unique.length}`,
+          )
+        },
+      )
 
       const summary = await finishApply(
         activeSession,
@@ -342,8 +365,8 @@ export default function App() {
         <div className="workspace-intro">
           <h1>Redirect schedule workspace</h1>
           <p>
-            Edit targets and press Enter to save. 301s run only when Philippine
-            time hits your Daily apply time — with live progress in this UI.
+            When Philippine time hits your schedule, all domains get 301s in
+            parallel (about 15 at a time) with live progress in this UI.
           </p>
         </div>
 

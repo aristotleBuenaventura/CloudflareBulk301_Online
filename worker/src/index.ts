@@ -327,6 +327,29 @@ export default {
         return json({ ok: true, result })
       }
 
+      // Apply every saved domain concurrently (same-time batches on the Worker).
+      if (path === '/api/apply-all' && request.method === 'POST') {
+        if (!isAuthorized(request, env)) return unauthorized()
+        const body = (await request.json().catch(() => ({}))) as {
+          claimFingerprint?: string
+        }
+        if (body.claimFingerprint) {
+          await env.CONFIG.put(LAST_AUTO_KEY, body.claimFingerprint)
+        }
+        try {
+          const summary = await runApply(env)
+          return json({ ok: true, summary, parallel: true })
+        } catch (error) {
+          if (body.claimFingerprint) {
+            const current = await env.CONFIG.get(LAST_AUTO_KEY)
+            if (current === body.claimFingerprint) {
+              await env.CONFIG.delete(LAST_AUTO_KEY)
+            }
+          }
+          throw error
+        }
+      }
+
       if (path === '/api/apply-finish' && request.method === 'POST') {
         if (!isAuthorized(request, env)) return unauthorized()
         const body = (await request.json()) as {

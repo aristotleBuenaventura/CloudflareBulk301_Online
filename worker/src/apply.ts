@@ -6,6 +6,35 @@ import {
 import { getTargetForDate } from './schedule'
 import type { AppConfig, ApplyRunSummary, DomainResult } from './types'
 
+/** How many zone redirects to create at the same time. */
+export const APPLY_CONCURRENCY = 15
+
+export async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+  onResult?: (result: R, index: number, completed: number) => void,
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+  let completed = 0
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = nextIndex++
+      if (i >= items.length) return
+      const result = await fn(items[i], i)
+      results[i] = result
+      completed++
+      onResult?.(result, i, completed)
+    }
+  }
+
+  const poolSize = Math.max(1, Math.min(concurrency, items.length))
+  await Promise.all(Array.from({ length: poolSize }, () => worker()))
+  return results
+}
+
 export async function applyOneDomain(
   apiToken: string,
   config: AppConfig,
@@ -76,6 +105,7 @@ export async function applyScheduledRedirects(
   apiToken: string,
   config: AppConfig,
   at = new Date(),
+  onResult?: (result: DomainResult, index: number, completed: number) => void,
 ): Promise<ApplyRunSummary> {
   const { dayKey, day } = getTargetForDate(config, at)
   const targetUrl = day.targetUrl.trim()
@@ -115,14 +145,12 @@ export async function applyScheduledRedirects(
     }
   }
 
-  const results: DomainResult[] = []
-
-  for (let i = 0; i < domains.length; i++) {
-    results.push(await applyOneDomain(apiToken, config, domains[i], at))
-    if (i < domains.length - 1) {
-      await new Promise((r) => setTimeout(r, 250))
-    }
-  }
+  const results = await mapPool(
+    domains,
+    APPLY_CONCURRENCY,
+    (domain) => applyOneDomain(apiToken, config, domain, at),
+    onResult,
+  )
 
   return {
     ranAt: at.toISOString(),

@@ -140,6 +140,21 @@ export async function applyOneDomain(
   return body.result
 }
 
+/** Apply all domains concurrently on the Worker (batched in parallel). */
+export async function applyAll(
+  session: WorkerSession,
+  claimFingerprint?: string,
+): Promise<ApplyRunSummary> {
+  const response = await fetch(joinUrl(session.workerUrl, '/api/apply-all'), {
+    method: 'POST',
+    headers: authHeaders(session.adminSecret),
+    body: JSON.stringify({ claimFingerprint }),
+  })
+  if (!response.ok) throw new Error(await parseError(response))
+  const body = (await response.json()) as { summary: ApplyRunSummary }
+  return body.summary
+}
+
 export async function finishApply(
   session: WorkerSession,
   results: DomainResult[],
@@ -154,3 +169,32 @@ export async function finishApply(
   const body = (await response.json()) as { summary: ApplyRunSummary }
   return body.summary
 }
+
+/** Run many domain applies at once (browser-side pool), updating as each finishes. */
+export async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+  onResult?: (result: R, index: number, completed: number) => void,
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+  let completed = 0
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = nextIndex++
+      if (i >= items.length) return
+      const result = await fn(items[i], i)
+      results[i] = result
+      completed++
+      onResult?.(result, i, completed)
+    }
+  }
+
+  const poolSize = Math.max(1, Math.min(concurrency, items.length || 1))
+  await Promise.all(Array.from({ length: poolSize }, () => worker()))
+  return results
+}
+
+export const UI_APPLY_CONCURRENCY = 15
