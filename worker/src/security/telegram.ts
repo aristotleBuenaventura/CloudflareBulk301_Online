@@ -30,9 +30,28 @@ function viewerUrl(env: Env): string | null {
   return `${app}/viewer?t=${encodeURIComponent(token)}`
 }
 
+/** Telegram URL buttons require a public http(s) URL — localhost is rejected. */
+function publicViewerButtonUrl(url: string | null): string | null {
+  if (!url) return null
+  if (!/^https:\/\//i.test(url)) return null
+  try {
+    const host = new URL(url).hostname
+    if (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host.endsWith('.local')
+    ) {
+      return null
+    }
+  } catch {
+    return null
+  }
+  return url
+}
+
 export function formatApplyTelegramHtml(
   summary: ApplyRunSummary,
-  opts?: { applyTime?: string; viewUrl?: string | null },
+  opts?: { applyTime?: string; viewUrlNote?: string | null },
 ): string {
   const failed = (summary.results || [])
     .filter((r) => r.status === 'failed')
@@ -67,15 +86,8 @@ export function formatApplyTelegramHtml(
     }
   }
 
-  if (opts?.viewUrl) {
-    lines.push('', 'View online:')
-    // Telegram often strips <a href> for localhost/private URLs — always show plain URL.
-    const safeUrl = escapeHtml(opts.viewUrl)
-    if (/^https:\/\//i.test(opts.viewUrl)) {
-      lines.push(`<a href="${safeUrl}">${safeUrl}</a>`)
-    } else {
-      lines.push(safeUrl)
-    }
+  if (opts?.viewUrlNote) {
+    lines.push('', `Viewer: ${escapeHtml(opts.viewUrlNote)}`)
   }
 
   return lines.join('\n')
@@ -88,33 +100,78 @@ export async function sendTelegramApplyUpdate(
 ): Promise<void> {
   const botToken = String(env.TELEGRAM_BOT_TOKEN || '').trim()
   const chatId = String(env.TELEGRAM_CHAT_ID || '').trim()
-  if (!botToken || !chatId) return
+  if (!botToken || !chatId) {
+    console.warn('Telegram skip: missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID')
+    return
+  }
 
+  const viewUrl = viewerUrl(env)
+  const buttonUrl = publicViewerButtonUrl(viewUrl)
   const text = formatApplyTelegramHtml(summary, {
     applyTime,
-    viewUrl: viewerUrl(env),
+    // Local / non-HTTPS: include URL in body so message still sends.
+    viewUrlNote: buttonUrl ? null : viewUrl,
   })
+
+  const payload: Record<string, unknown> = {
+    chat_id: chatId,
+    text,
+    parse_mode: 'HTML',
+    disable_web_page_preview: true,
+  }
+
+  if (buttonUrl) {
+    payload.reply_markup = {
+      inline_keyboard: [
+        [{ text: 'Click online results here!', url: buttonUrl }],
+      ],
+    }
+  }
 
   const response = await fetch(
     `https://api.telegram.org/bot${botToken}/sendMessage`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      }),
+      body: JSON.stringify(payload),
     },
   )
 
   if (!response.ok) {
     const body = await response.text().catch(() => '')
     console.error(
-      `Telegram send failed: HTTP ${response.status} ${body.slice(0, 200)}`,
+      `Telegram send failed: HTTP ${response.status} ${body.slice(0, 300)}`,
     )
+    // Retry without button if markup was the problem.
+    if (payload.reply_markup) {
+      delete payload.reply_markup
+      const retry = await fetch(
+        `https://api.telegram.org/bot${botToken}/sendMessage`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...payload,
+            text: formatApplyTelegramHtml(summary, {
+              applyTime,
+              viewUrlNote: viewUrl,
+            }),
+          }),
+        },
+      )
+      if (!retry.ok) {
+        const retryBody = await retry.text().catch(() => '')
+        console.error(
+          `Telegram retry failed: HTTP ${retry.status} ${retryBody.slice(0, 300)}`,
+        )
+      } else {
+        console.log('Telegram sent (retry without button)')
+      }
+    }
+    return
   }
+
+  console.log('Telegram apply update sent')
 }
 
 export function viewerTokenOk(env: Env, provided: string): boolean {

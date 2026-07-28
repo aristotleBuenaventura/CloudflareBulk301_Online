@@ -416,14 +416,16 @@ async function runApply(env: Env, at = new Date()): Promise<ApplyRunSummary> {
   return summary
 }
 
-function queueScheduledTelegram(
+async function notifyScheduledTelegram(
   env: Env,
   summary: ApplyRunSummary,
   applyTime?: string,
-): void {
-  void sendTelegramApplyUpdate(env, summary, applyTime).catch((err) => {
+): Promise<void> {
+  try {
+    await sendTelegramApplyUpdate(env, summary, applyTime)
+  } catch (err) {
     console.error('Telegram notify failed:', err)
-  })
+  }
 }
 
 async function maybeAutoApply(env: Env) {
@@ -441,8 +443,8 @@ async function maybeAutoApply(env: Env) {
 
   try {
     const summary = await runApply(env)
-    // Telegram only for true scheduled runs (cron / schedule hit).
-    queueScheduledTelegram(env, summary, due.applyTime)
+    // Await so cron waitUntil covers the Telegram request.
+    await notifyScheduledTelegram(env, summary, due.applyTime)
     return {
       ran: true,
       reason: due.reason,
@@ -1462,7 +1464,11 @@ export default {
         try {
           const summary = await runApply(env)
           if (body.claimFingerprint) {
-            queueScheduledTelegram(env, summary, (await readConfig(env)).applyTime)
+            await notifyScheduledTelegram(
+              env,
+              summary,
+              (await readConfig(env)).applyTime,
+            )
           }
           await appendAudit(
             env.CONFIG,
@@ -1571,7 +1577,7 @@ export default {
               )
               // UI schedule tick claims with fingerprint — same as cron scheduled run.
               if (body.claimFingerprint) {
-                queueScheduledTelegram(env, summary, config.applyTime)
+                await notifyScheduledTelegram(env, summary, config.applyTime)
               }
               send({ type: 'done', summary })
             } catch (error) {
@@ -1625,7 +1631,7 @@ export default {
           { actor: auth.session.email },
         )
         if (body.claimFingerprint) {
-          queueScheduledTelegram(env, summary, config.applyTime)
+          await notifyScheduledTelegram(env, summary, config.applyTime)
         }
         return json(request, env, { ok: true, summary })
       }
