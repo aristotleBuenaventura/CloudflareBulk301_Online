@@ -413,10 +413,17 @@ async function runApply(env: Env, at = new Date()): Promise<ApplyRunSummary> {
   const config = await readConfig(env)
   const summary = await applyScheduledRedirects(token, config, at)
   await env.CONFIG.put(LAST_RUN_KEY, JSON.stringify(summary))
-  void sendTelegramApplyUpdate(env, summary, config.applyTime).catch((err) => {
+  return summary
+}
+
+function queueScheduledTelegram(
+  env: Env,
+  summary: ApplyRunSummary,
+  applyTime?: string,
+): void {
+  void sendTelegramApplyUpdate(env, summary, applyTime).catch((err) => {
     console.error('Telegram notify failed:', err)
   })
-  return summary
 }
 
 async function maybeAutoApply(env: Env) {
@@ -434,6 +441,8 @@ async function maybeAutoApply(env: Env) {
 
   try {
     const summary = await runApply(env)
+    // Telegram only for true scheduled runs (cron / schedule hit).
+    queueScheduledTelegram(env, summary, due.applyTime)
     return {
       ran: true,
       reason: due.reason,
@@ -1452,6 +1461,9 @@ export default {
         }
         try {
           const summary = await runApply(env)
+          if (body.claimFingerprint) {
+            queueScheduledTelegram(env, summary, (await readConfig(env)).applyTime)
+          }
           await appendAudit(
             env.CONFIG,
             request,
@@ -1557,11 +1569,10 @@ export default {
                 `${summary.dayKey} → ${summary.targetUrl} ok=${summary.success} fail=${summary.failed}`,
                 { actor: actorEmail },
               )
-              void sendTelegramApplyUpdate(
-                env,
-                summary,
-                config.applyTime,
-              ).catch((err) => console.error('Telegram notify failed:', err))
+              // UI schedule tick claims with fingerprint — same as cron scheduled run.
+              if (body.claimFingerprint) {
+                queueScheduledTelegram(env, summary, config.applyTime)
+              }
               send({ type: 'done', summary })
             } catch (error) {
               if (body.claimFingerprint) {
@@ -1613,9 +1624,9 @@ export default {
           `${summary.dayKey} → ${summary.targetUrl}`,
           { actor: auth.session.email },
         )
-        void sendTelegramApplyUpdate(env, summary, config.applyTime).catch(
-          (err) => console.error('Telegram notify failed:', err),
-        )
+        if (body.claimFingerprint) {
+          queueScheduledTelegram(env, summary, config.applyTime)
+        }
         return json(request, env, { ok: true, summary })
       }
 

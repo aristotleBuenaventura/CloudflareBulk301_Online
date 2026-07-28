@@ -68,10 +68,14 @@ export function formatApplyTelegramHtml(
   }
 
   if (opts?.viewUrl) {
-    lines.push(
-      '',
-      `<a href="${escapeHtml(opts.viewUrl)}">View online</a>`,
-    )
+    lines.push('', 'View online:')
+    // Telegram often strips <a href> for localhost/private URLs — always show plain URL.
+    const safeUrl = escapeHtml(opts.viewUrl)
+    if (/^https:\/\//i.test(opts.viewUrl)) {
+      lines.push(`<a href="${safeUrl}">${safeUrl}</a>`)
+    } else {
+      lines.push(safeUrl)
+    }
   }
 
   return lines.join('\n')

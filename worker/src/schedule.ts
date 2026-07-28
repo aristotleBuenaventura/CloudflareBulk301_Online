@@ -70,8 +70,9 @@ function toMinutes(hhmm: string): number {
 
 /**
  * Fire ONLY at the exact scheduled HH:MM (Philippine/local timezone), once per
- * date+applyTime+target fingerprint. Never catch-up after the minute — so
- * saving a new target later in the day does NOT trigger 301s.
+ * date+applyTime. Target URL is NOT part of the fingerprint — changing a
+ * target after (or during) today's slot must not re-trigger 301s / Telegram.
+ * Never catch-up after the minute.
  */
 export function shouldRunScheduledApply(
   config: AppConfig,
@@ -91,9 +92,14 @@ export function shouldRunScheduledApply(
   const applyTime = normalizeApplyTime(config.applyTime)
   const { day } = getTargetForDate(config, now)
   const targetUrl = day.targetUrl.trim()
-  const fingerprint = `${dateKey}|${applyTime}|${targetUrl}`
+  // Slot id only — exclude target so edits don't look like a new schedule hit.
+  const fingerprint = `${dateKey}|${applyTime}`
+  // Accept legacy fingerprints that included targetUrl (`date|time|url`).
+  const alreadyRan =
+    lastAutoFingerprint === fingerprint ||
+    Boolean(lastAutoFingerprint?.startsWith(`${fingerprint}|`))
 
-  if (lastAutoFingerprint === fingerprint) {
+  if (alreadyRan) {
     return {
       run: false,
       dateKey,
