@@ -57,13 +57,23 @@ export function formatApplyTelegramHtml(
     .filter((r) => r.status === 'failed')
     .slice(0, 8)
   const statusIcon = summary.failed === 0 ? '✅' : '⚠️'
+  const timeZone = summary.timezone || 'Asia/Manila'
+  const ranLocal = new Date(summary.ranAt).toLocaleString('en-US', {
+    timeZone,
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  })
   const lines = [
     `<b>Bulk301 · Scheduled apply ${statusIcon}</b>`,
     '',
     `Day: <b>${escapeHtml(dayLabel(summary.dayKey))}</b>`,
     `Target: <code>${escapeHtml(summary.targetUrl || '—')}</code>`,
-    `Time: ${escapeHtml(opts?.applyTime || '—')} ${escapeHtml(summary.timezone || '')}`,
-    `Ran: ${escapeHtml(new Date(summary.ranAt).toLocaleString())}`,
+    `Time: ${escapeHtml(ranLocal)} ${escapeHtml(timeZone)}`,
     '',
     `Domains: ${(summary.success || 0) + (summary.skipped || 0) + (summary.failed || 0)}`,
     `✅ Success: ${summary.success || 0}`,
