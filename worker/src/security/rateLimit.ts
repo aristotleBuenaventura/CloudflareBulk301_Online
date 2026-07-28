@@ -119,6 +119,15 @@ export async function assertForgotPasswordRateLimit(
   return bumpRate(kv, `auth_forgot:${ip}`, RATE_WINDOW_MS, 5)
 }
 
+/** Public viewer — tighter than login to limit scraping. */
+export async function assertViewerRateLimit(
+  kv: KVNamespace,
+  request: Request,
+): Promise<{ ok: true } | { ok: false; retryAfterSec: number }> {
+  const ip = clientIp(request)
+  return bumpRate(kv, `viewer_rate:${ip}`, 60_000, 30)
+}
+
 export function parseIpAllowlist(raw: string | undefined): string[] {
   return String(raw || '')
     .split(',')

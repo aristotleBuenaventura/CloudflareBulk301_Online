@@ -16,6 +16,8 @@ import {
   shouldRunScheduledApply,
 } from './schedule'
 import { appendAudit, describeConfigChanges, readAudit } from './security/audit'
+import { sendTelegramApplyUpdate, viewerTokenOk } from './security/telegram'
+import { buildPublicViewerPayload } from './security/viewer'
 import { clientIp, timingSafeEqual } from './security/crypto'
 import {
   assertTrustedOrigin,
@@ -30,6 +32,7 @@ import {
   assertForgotPasswordRateLimit,
   assertLoginRateLimit,
   assertNotLocked,
+  assertViewerRateLimit,
   clearFailedLogins,
   isIpAllowed,
   parseIpAllowlist,
@@ -410,6 +413,9 @@ async function runApply(env: Env, at = new Date()): Promise<ApplyRunSummary> {
   const config = await readConfig(env)
   const summary = await applyScheduledRedirects(token, config, at)
   await env.CONFIG.put(LAST_RUN_KEY, JSON.stringify(summary))
+  void sendTelegramApplyUpdate(env, summary, config.applyTime).catch((err) => {
+    console.error('Telegram notify failed:', err)
+  })
   return summary
 }
 
@@ -504,7 +510,12 @@ export default {
 
     try {
       const originBlock = rejectOrigin(request, env)
-      if (originBlock && path !== '/' && path !== '/api/health') {
+      if (
+        originBlock &&
+        path !== '/' &&
+        path !== '/api/health' &&
+        path !== '/api/public/viewer'
+      ) {
         return originBlock
       }
 
@@ -514,6 +525,46 @@ export default {
           service: 'bulk301-scheduler',
           auth: 'cookie-session',
         })
+      }
+
+      // Public read-only viewer (token required — no session).
+      if (path === '/api/public/viewer' && request.method === 'GET') {
+        const rate = await assertViewerRateLimit(env.CONFIG, request)
+        if (!rate.ok) {
+          return json(
+            request,
+            env,
+            {
+              error: `Too many requests. Try again in ${rate.retryAfterSec}s.`,
+            },
+            429,
+          )
+        }
+        const provided =
+          url.searchParams.get('t') ||
+          url.searchParams.get('token') ||
+          request.headers.get('X-Viewer-Token') ||
+          ''
+        if (!viewerTokenOk(env, provided)) {
+          return json(request, env, { error: 'Invalid or missing viewer token.' }, 401)
+        }
+        const config = await readConfig(env)
+        const { dayKey, day } = getTargetForDate(config)
+        const lastRunRaw = await env.CONFIG.get(LAST_RUN_KEY)
+        let lastRun: ApplyRunSummary | null = null
+        if (lastRunRaw) {
+          try {
+            lastRun = JSON.parse(lastRunRaw) as ApplyRunSummary
+          } catch {
+            lastRun = null
+          }
+        }
+        const payload = buildPublicViewerPayload(config, lastRun, {
+          dayKey,
+          dayLabel: day.label,
+          targetUrl: day.targetUrl,
+        })
+        return json(request, env, payload)
       }
 
       // ——— Auth ———
@@ -1506,6 +1557,11 @@ export default {
                 `${summary.dayKey} → ${summary.targetUrl} ok=${summary.success} fail=${summary.failed}`,
                 { actor: actorEmail },
               )
+              void sendTelegramApplyUpdate(
+                env,
+                summary,
+                config.applyTime,
+              ).catch((err) => console.error('Telegram notify failed:', err))
               send({ type: 'done', summary })
             } catch (error) {
               if (body.claimFingerprint) {
@@ -1556,6 +1612,9 @@ export default {
           'apply_run',
           `${summary.dayKey} → ${summary.targetUrl}`,
           { actor: auth.session.email },
+        )
+        void sendTelegramApplyUpdate(env, summary, config.applyTime).catch(
+          (err) => console.error('Telegram notify failed:', err),
         )
         return json(request, env, { ok: true, summary })
       }

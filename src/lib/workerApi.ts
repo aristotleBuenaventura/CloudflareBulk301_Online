@@ -428,6 +428,40 @@ export async function applyStream(
   return summary
 }
 
+export async function fetchPublicViewer(
+  workerUrl: string,
+  token: string,
+): Promise<PublicViewerData> {
+  const params = new URLSearchParams({ t: token })
+  const response = await apiFetch(
+    workerUrl,
+    `/api/public/viewer?${params.toString()}`,
+  )
+  if (!response.ok) throw new Error(await parseError(response))
+  return (await response.json()) as PublicViewerData
+}
+
+export interface PublicViewerData {
+  ok: true
+  applyTime: string
+  timezone: string
+  wildcard: boolean
+  today: {
+    dayKey: string
+    dayLabel: string
+    targetUrl: string
+  }
+  lastRun: {
+    ranAt: string
+    dayKey: string
+    targetUrl: string
+    success: number
+    skipped: number
+    failed: number
+    results: DomainResult[]
+  } | null
+}
+
 export type ApplyStreamEvent =
   | {
       type: 'start'

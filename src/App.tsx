@@ -4,6 +4,7 @@ import { ApplyControls } from './components/ApplyControls'
 import { DomainUploader } from './components/DomainUploader'
 import { LoginScreen } from './components/LoginScreen'
 import { PhilTimeClock } from './components/PhilTimeClock'
+import { PublicViewer } from './components/PublicViewer'
 import { ResultsPanel } from './components/ResultsPanel'
 import { ScheduleEditor } from './components/ScheduleEditor'
 import { SecurityPanel } from './components/SecurityPanel'
@@ -37,7 +38,23 @@ const WORKER_URL =
 
 const TICK_INTERVAL_MS = 10_000
 
+function isViewerPath(): boolean {
+  try {
+    const path = window.location.pathname.replace(/\/+$/, '') || '/'
+    return path === '/viewer'
+  } catch {
+    return false
+  }
+}
+
 export default function App() {
+  if (isViewerPath()) {
+    return <PublicViewer />
+  }
+  return <MainApp />
+}
+
+function MainApp() {
   const [session, setSession] = useState<WorkerSession | null>(null)
   const [role, setRole] = useState<UserRole>('admin')
   const [totpEnabled, setTotpEnabled] = useState(false)

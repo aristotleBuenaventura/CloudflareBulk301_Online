@@ -5,8 +5,16 @@ CLOUDFLARE_API_TOKEN=
 # Bootstrap / create-user gate (NOT daily login). Use 16+ random chars for public.
 ADMIN_SECRET=change-me-to-a-long-random-string
 
-# Public UI URL used in password-reset emails.
+# Public UI URL used in password-reset emails + Telegram viewer link.
 APP_URL=http://localhost:5173
+
+# Public read-only viewer (/viewer?t=...). Use a long random value (24+ chars).
+VIEWER_TOKEN=
+
+# Telegram notify after apply (Sample A). Leave empty to disable.
+# Create bot via @BotFather, add to group, use group chat_id (often -100…).
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
 
 # Gmail SMTP for forgot-password emails (same pattern as MR Database Tool).
 # Use a Google App Password for SMTP_PASS — not your normal Gmail password.

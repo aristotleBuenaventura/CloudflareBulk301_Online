@@ -18,4 +18,8 @@ export interface Env {
   SMTP_USER?: string
   SMTP_PASS?: string
   SMTP_FROM?: string
+  /** Unguessable token for public read-only viewer page */
+  VIEWER_TOKEN?: string
+  TELEGRAM_BOT_TOKEN?: string
+  TELEGRAM_CHAT_ID?: string
 }

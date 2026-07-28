@@ -1042,6 +1042,31 @@ a {
   line-height: 1.4;
 }
 
+.viewer-shell .viewer-bar {
+  grid-template-columns: 1fr auto;
+}
+
+.viewer-main {
+  max-width: 720px;
+}
+
+.viewer-summary .viewer-meta-value {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.viewer-wildcard {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.viewer-shell .today-block {
+  margin-top: 1rem;
+}
+
 /* ——— Footer ——— */
 .app-footer {
   display: flex;
