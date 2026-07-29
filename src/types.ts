@@ -42,7 +42,10 @@ export interface RedirectCreateResult {
 
 export interface AppConfig {
   schedule: DaySchedule[]
+  /** Old domains for Cloudflare API token 1. */
   domains: string[]
+  /** Old domains for Cloudflare API token 2. */
+  domains2: string[]
   wildcard: boolean
   timezone: string
   /** Daily auto-apply time in timezone, "HH:MM". */

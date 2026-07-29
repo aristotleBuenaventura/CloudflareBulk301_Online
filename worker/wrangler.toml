@@ -24,6 +24,7 @@ TIMEZONE = "Asia/Manila"
 
 # Secrets (set via CLI — never commit):
 #   npx wrangler secret put CLOUDFLARE_API_TOKEN
+#   npx wrangler secret put CLOUDFLARE_API_TOKEN_2
 #   npx wrangler secret put ADMIN_SECRET
 #   npx wrangler secret put SMTP_PASS
 # Optional vars/secrets for forgot-password email:
@@ -35,3 +36,4 @@ TIMEZONE = "Asia/Manila"
 #   Zone → Page Rules: Edit
 #   Zone → Single Redirect: Edit
 #   Zone resources: only zones you manage (not Account Administrator)
+# CLOUDFLARE_API_TOKEN → Account 1 domains; CLOUDFLARE_API_TOKEN_2 → Account 2 domains.

@@ -141,7 +141,21 @@ export function describeConfigChanges(
     for (const d of after) if (!before.has(d)) added += 1
     for (const d of before) if (!after.has(d)) removed += 1
     changes.push(
-      `Uploaded CSV / domains: ${prev.domains.length} → ${next.domains.length} (+${added} / −${removed})`,
+      `Account 1 domains: ${prev.domains.length} → ${next.domains.length} (+${added} / −${removed})`,
+    )
+  }
+
+  const before2 = domainSet(prev.domains2 || [])
+  const after2 = domainSet(next.domains2 || [])
+  const sameDomains2 =
+    before2.size === after2.size && [...before2].every((d) => after2.has(d))
+  if (!sameDomains2) {
+    let added = 0
+    let removed = 0
+    for (const d of after2) if (!before2.has(d)) added += 1
+    for (const d of before2) if (!after2.has(d)) removed += 1
+    changes.push(
+      `Account 2 domains: ${(prev.domains2 || []).length} → ${(next.domains2 || []).length} (+${added} / −${removed})`,
     )
   }
 

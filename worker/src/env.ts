@@ -2,6 +2,8 @@
 export interface Env {
   CONFIG: KVNamespace
   CLOUDFLARE_API_TOKEN: string
+  /** Optional second account token (domains2). */
+  CLOUDFLARE_API_TOKEN_2?: string
   ADMIN_SECRET: string
   TIMEZONE: string
   ALLOWED_ORIGINS?: string

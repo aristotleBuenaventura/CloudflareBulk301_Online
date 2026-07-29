@@ -2,6 +2,9 @@
 # Least privilege: Zone → Zone (Read), Page Rules (Edit), Single Redirect (Edit).
 CLOUDFLARE_API_TOKEN=
 
+# Optional second Cloudflare account token (Account 2 domain list in the UI).
+CLOUDFLARE_API_TOKEN_2=
+
 # Bootstrap / create-user gate (NOT daily login). Use 16+ random chars for public.
 ADMIN_SECRET=change-me-to-a-long-random-string
 

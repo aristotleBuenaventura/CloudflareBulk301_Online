@@ -2,12 +2,16 @@ import { useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { parseDomains } from '../lib/csvParser'
 
 interface DomainUploaderProps {
+  title: string
+  description: string
   domains: string[]
   onChange: (domains: string[]) => void
   disabled?: boolean
 }
 
 export function DomainUploader({
+  title,
+  description,
   domains,
   onChange,
   disabled,
@@ -51,8 +55,8 @@ export function DomainUploader({
     <section className="section domains-section">
       <div className="section-head">
         <div>
-          <h2>Old domains</h2>
-          <p>CSV upload or paste — these redirect to today’s target</p>
+          <h2>{title}</h2>
+          <p>{description}</p>
         </div>
         <span className="count-badge">{domains.length}</span>
       </div>

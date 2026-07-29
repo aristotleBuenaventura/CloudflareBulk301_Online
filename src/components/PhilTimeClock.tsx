@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { formatApplyTime12, pad2 } from '../lib/applyTime'
 
 interface PhilTimeClockProps {
   timeZone?: string
@@ -8,12 +9,8 @@ interface PhilTimeClockProps {
   compact?: boolean
 }
 
-function pad(n: number) {
-  return String(n).padStart(2, '0')
-}
-
 function getParts(timeZone: string, date: Date) {
-  const parts = new Intl.DateTimeFormat('en-GB', {
+  const parts24 = new Intl.DateTimeFormat('en-GB', {
     timeZone,
     weekday: 'short',
     year: 'numeric',
@@ -26,16 +23,21 @@ function getParts(timeZone: string, date: Date) {
   }).formatToParts(date)
 
   const get = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((p) => p.type === type)?.value ?? ''
+    parts24.find((p) => p.type === type)?.value ?? ''
 
   let hour = get('hour')
   if (hour === '24') hour = '00'
+  const hourNum = Number(hour)
+  const minute = get('minute')
+  const second = get('second')
+  const period = hourNum >= 12 ? 'PM' : 'AM'
+  const hour12 = hourNum % 12 === 0 ? 12 : hourNum % 12
 
   return {
     weekday: get('weekday'),
     date: `${get('year')}-${get('month')}-${get('day')}`,
-    time: `${pad(Number(hour))}:${get('minute')}:${get('second')}`,
-    hhmm: `${pad(Number(hour))}:${get('minute')}`,
+    time: `${hour12}:${pad2(Number(minute))}:${pad2(Number(second))} ${period}`,
+    hhmm: `${pad2(hourNum)}:${minute}`,
   }
 }
 
@@ -55,10 +57,11 @@ export function PhilTimeClock({
 
   const parts = getParts(timeZone, now)
   const waiting = parts.hhmm < applyTime
+  const applyLabel = formatApplyTime12(applyTime)
   const statusText =
     scheduleStatus ||
     (waiting
-      ? `Waiting until ${applyTime}`
+      ? `Waiting until ${applyLabel}`
       : 'Waiting for next schedule window')
 
   if (compact) {

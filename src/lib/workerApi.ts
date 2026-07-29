@@ -353,6 +353,7 @@ export async function saveConfig(
   config: {
     schedule: DaySchedule[]
     domains: string[]
+    domains2: string[]
     wildcard: boolean
     timezone?: string
     applyTime?: string

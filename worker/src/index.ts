@@ -3,7 +3,6 @@ import {
   APPLY_CONCURRENCY,
   applyOneDomain,
   applyScheduledRedirects,
-  mapPool,
   summarizeResults,
 } from './apply'
 import {
@@ -91,8 +90,10 @@ import {
   type UserRole,
 } from './security/users'
 import {
+  allConfigDomains,
   defaultConfig,
   normalizeApplyTime,
+  uniqueDomains,
   type AppConfig,
   type ApplyRunSummary,
   type DaySchedule,
@@ -335,6 +336,8 @@ async function readConfig(env: Env): Promise<AppConfig> {
     return {
       ...base,
       ...parsed,
+      domains: uniqueDomains(parsed.domains ?? base.domains),
+      domains2: uniqueDomains(parsed.domains2 ?? base.domains2),
       timezone: parsed.timezone || env.TIMEZONE || 'Asia/Manila',
       applyTime: normalizeApplyTime(parsed.applyTime ?? base.applyTime),
     }
@@ -356,14 +359,16 @@ function normalizeConfigInput(
     ? (body.schedule as DaySchedule[])
     : current.schedule
   const domains = Array.isArray(body.domains)
-    ? Array.from(
-        new Set(body.domains.map((d) => String(d).trim()).filter(Boolean)),
-      )
+    ? uniqueDomains(body.domains.map((d) => String(d)))
     : current.domains
+  const domains2 = Array.isArray(body.domains2)
+    ? uniqueDomains(body.domains2.map((d) => String(d)))
+    : current.domains2
 
   return {
     schedule,
     domains,
+    domains2,
     wildcard:
       typeof body.wildcard === 'boolean' ? body.wildcard : current.wildcard,
     timezone: body.timezone?.trim() || current.timezone || fallbackTz,
@@ -374,15 +379,42 @@ function normalizeConfigInput(
   }
 }
 
-async function requireToken(env: Env): Promise<string> {
-  const token = normalizeApiToken(env.CLOUDFLARE_API_TOKEN || '')
+async function requireToken(env: Env, which: 1 | 2 = 1): Promise<string> {
+  const raw =
+    which === 2
+      ? String(env.CLOUDFLARE_API_TOKEN_2 || '')
+      : String(env.CLOUDFLARE_API_TOKEN || '')
+  const token = normalizeApiToken(raw)
+  const label = which === 2 ? 'CLOUDFLARE_API_TOKEN_2' : 'CLOUDFLARE_API_TOKEN'
   if (!token || isPlaceholderApiToken(token)) {
     throw new Error(
-      'CLOUDFLARE_API_TOKEN is missing or still a placeholder in worker/.dev.vars. ' +
+      `${label} is missing or still a placeholder in worker/.dev.vars. ` +
         'Paste a real Cloudflare API Token, save the file, restart wrangler dev, then try again.',
     )
   }
   return token
+}
+
+/** Primary token for domains; secondary for domains2 (null → those domains fail clearly). */
+async function resolveApplyTokens(
+  env: Env,
+  config: AppConfig,
+): Promise<{ primary: string; secondary: string | null }> {
+  const has1 = uniqueDomains(config.domains).length > 0
+  const has2 = uniqueDomains(config.domains2).length > 0
+
+  // Account 1 token required when that list has domains, or when both lists empty
+  // (keeps legacy apply paths consistent).
+  const primary =
+    has1 || !has2 ? await requireToken(env, 1) : 'unused'
+
+  let secondary: string | null = null
+  if (has2) {
+    const raw = normalizeApiToken(String(env.CLOUDFLARE_API_TOKEN_2 || ''))
+    secondary = raw && !isPlaceholderApiToken(raw) ? raw : null
+  }
+
+  return { primary, secondary }
 }
 
 async function checkDue(env: Env) {
@@ -390,9 +422,7 @@ async function checkDue(env: Env) {
   const clock = formatPhilippineClock(new Date(), config.timezone)
   const lastAuto = await env.CONFIG.get(LAST_AUTO_KEY)
   const check = shouldRunScheduledApply(config, lastAuto)
-  const domains = Array.from(
-    new Set(config.domains.map((d) => d.trim()).filter(Boolean)),
-  )
+  const domains = allConfigDomains(config)
   const { dayKey } = getTargetForDate(config)
 
   return {
@@ -409,9 +439,9 @@ async function checkDue(env: Env) {
 }
 
 async function runApply(env: Env, at = new Date()): Promise<ApplyRunSummary> {
-  const token = await requireToken(env)
   const config = await readConfig(env)
-  const summary = await applyScheduledRedirects(token, config, at)
+  const tokens = await resolveApplyTokens(env, config)
+  const summary = await applyScheduledRedirects(tokens, config, at)
   await env.CONFIG.put(LAST_RUN_KEY, JSON.stringify(summary))
   return summary
 }
@@ -1511,17 +1541,17 @@ export default {
                 await env.CONFIG.put(LAST_AUTO_KEY, body.claimFingerprint)
               }
 
-              const token = await requireToken(env)
               const config = await readConfig(env)
-              const domains = Array.from(
-                new Set(config.domains.map((d) => d.trim()).filter(Boolean)),
-              )
+              const tokens = await resolveApplyTokens(env, config)
+              const domains1 = uniqueDomains(config.domains)
+              const domains2 = uniqueDomains(config.domains2)
+              const totalDomains = domains1.length + domains2.length
               const { dayKey, day } = getTargetForDate(config)
               const targetUrl = day.targetUrl.trim()
 
               send({
                 type: 'start',
-                total: domains.length,
+                total: totalDomains,
                 concurrency: APPLY_CONCURRENCY,
                 targetUrl,
                 dayKey,
@@ -1540,30 +1570,29 @@ export default {
                 return
               }
 
-              if (domains.length === 0) {
+              if (totalDomains === 0) {
                 const summary = summarizeResults(config, [])
                 await env.CONFIG.put(LAST_RUN_KEY, JSON.stringify(summary))
                 send({ type: 'done', summary })
                 return
               }
 
-              const results = await mapPool(
-                domains,
-                APPLY_CONCURRENCY,
-                (domain) => applyOneDomain(token, config, domain),
+              const summary = await applyScheduledRedirects(
+                tokens,
+                config,
+                new Date(),
                 (result, index, completed) => {
                   send({
                     type: 'result',
                     index,
                     completed,
-                    total: domains.length,
+                    total: totalDomains,
                     concurrency: APPLY_CONCURRENCY,
                     result,
                   })
                 },
               )
 
-              const summary = summarizeResults(config, results)
               await env.CONFIG.put(LAST_RUN_KEY, JSON.stringify(summary))
               if (body.claimFingerprint) {
                 await env.CONFIG.put(LAST_AUTO_KEY, body.claimFingerprint)

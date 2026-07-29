@@ -33,7 +33,10 @@ export interface DaySchedule {
 
 export interface AppConfig {
   schedule: DaySchedule[]
+  /** Old domains for CLOUDFLARE_API_TOKEN (account 1). */
   domains: string[]
+  /** Old domains for CLOUDFLARE_API_TOKEN_2 (account 2). */
+  domains2: string[]
   wildcard: boolean
   timezone: string
   /** Daily auto-apply time in `timezone`, 24h "HH:MM" (e.g. "00:00", "14:30"). */
@@ -82,9 +85,24 @@ export function defaultConfig(timezone = 'Asia/Manila'): AppConfig {
   return {
     schedule: DEFAULT_SCHEDULE,
     domains: [],
+    domains2: [],
     wildcard: true,
     timezone,
     applyTime: '00:00',
     updatedAt: new Date().toISOString(),
   }
+}
+
+export function uniqueDomains(list: string[] | undefined | null): string[] {
+  return Array.from(
+    new Set((list || []).map((d) => d.trim()).filter(Boolean)),
+  )
+}
+
+/** Combined domains from both Cloudflare accounts (deduped). */
+export function allConfigDomains(config: AppConfig): string[] {
+  return uniqueDomains([
+    ...(config.domains || []),
+    ...(config.domains2 || []),
+  ])
 }

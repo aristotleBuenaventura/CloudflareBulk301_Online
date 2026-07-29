@@ -5,6 +5,7 @@ import {
 } from './cloudflareApi'
 import { getTargetForDate } from './schedule'
 import type { AppConfig, ApplyRunSummary, DomainResult } from './types'
+import { uniqueDomains } from './types'
 
 /** How many zone redirects to create at the same time. */
 export const APPLY_CONCURRENCY = 25
@@ -101,17 +102,49 @@ export async function applyOneDomain(
   }
 }
 
+export type ApplyTokenPair = {
+  /** CLOUDFLARE_API_TOKEN — required when domains (account 1) is non-empty. */
+  primary: string
+  /** CLOUDFLARE_API_TOKEN_2 — required when domains2 is non-empty. */
+  secondary: string | null
+}
+
+type WorkItem = {
+  domain: string
+  token: string | null
+  account: 1 | 2
+}
+
+function buildWorkItems(
+  config: AppConfig,
+  tokens: ApplyTokenPair,
+): WorkItem[] {
+  const domains1 = uniqueDomains(config.domains)
+  const domains2 = uniqueDomains(config.domains2)
+  const items: WorkItem[] = [
+    ...domains1.map((domain) => ({
+      domain,
+      token: tokens.primary,
+      account: 1 as const,
+    })),
+    ...domains2.map((domain) => ({
+      domain,
+      token: tokens.secondary,
+      account: 2 as const,
+    })),
+  ]
+  return items
+}
+
 export async function applyScheduledRedirects(
-  apiToken: string,
+  tokens: ApplyTokenPair,
   config: AppConfig,
   at = new Date(),
   onResult?: (result: DomainResult, index: number, completed: number) => void,
 ): Promise<ApplyRunSummary> {
   const { dayKey, day } = getTargetForDate(config, at)
   const targetUrl = day.targetUrl.trim()
-  const domains = Array.from(
-    new Set(config.domains.map((d) => d.trim()).filter(Boolean)),
-  )
+  const work = buildWorkItems(config, tokens)
 
   if (!targetUrl) {
     return {
@@ -132,7 +165,7 @@ export async function applyScheduledRedirects(
     }
   }
 
-  if (domains.length === 0) {
+  if (work.length === 0) {
     return {
       ranAt: at.toISOString(),
       timezone: config.timezone,
@@ -146,9 +179,21 @@ export async function applyScheduledRedirects(
   }
 
   const results = await mapPool(
-    domains,
+    work,
     APPLY_CONCURRENCY,
-    (domain) => applyOneDomain(apiToken, config, domain, at),
+    async (item) => {
+      if (!item.token) {
+        return {
+          domain: item.domain,
+          status: 'failed' as const,
+          message:
+            item.account === 2
+              ? 'CLOUDFLARE_API_TOKEN_2 is missing. Add it in worker/.dev.vars (or Worker secrets) for Account 2 domains.'
+              : 'CLOUDFLARE_API_TOKEN is missing.',
+        }
+      }
+      return applyOneDomain(item.token, config, item.domain, at)
+    },
     onResult,
   )
 

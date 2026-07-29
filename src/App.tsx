@@ -73,6 +73,7 @@ function MainApp() {
 
   const [schedule, setSchedule] = useState<DaySchedule[]>(DEFAULT_SCHEDULE)
   const [domains, setDomains] = useState<string[]>([])
+  const [domains2, setDomains2] = useState<string[]>([])
   const [wildcard, setWildcard] = useState(true)
   const [timezone, setTimezone] = useState('Asia/Manila')
   const [applyTime, setApplyTime] = useState('00:00')
@@ -96,11 +97,19 @@ function MainApp() {
   const payloadRef = useRef({
     schedule,
     domains,
+    domains2,
     wildcard,
     timezone,
     applyTime,
   })
-  payloadRef.current = { schedule, domains, wildcard, timezone, applyTime }
+  payloadRef.current = {
+    schedule,
+    domains,
+    domains2,
+    wildcard,
+    timezone,
+    applyTime,
+  }
 
   const highlightDate = useMemo(() => new Date(), [])
 
@@ -110,6 +119,7 @@ function MainApp() {
         data.config.schedule?.length ? data.config.schedule : DEFAULT_SCHEDULE,
       )
       setDomains(data.config.domains ?? [])
+      setDomains2(data.config.domains2 ?? [])
       setWildcard(data.config.wildcard ?? true)
       setTimezone(data.config.timezone || 'Asia/Manila')
       setApplyTime(data.config.applyTime || '00:00')
@@ -386,6 +396,11 @@ function MainApp() {
     setDirty(true)
   }, [])
 
+  const handleDomains2Change = useCallback((next: string[]) => {
+    setDomains2(next)
+    setDirty(true)
+  }, [])
+
   const handleSave = useCallback(async () => {
     if (!session || savingRef.current) return
     savingRef.current = true
@@ -396,6 +411,7 @@ function MainApp() {
       const config = await saveConfig(session, payload)
       if (config.schedule?.length) setSchedule(config.schedule)
       setDomains(config.domains ?? payload.domains)
+      setDomains2(config.domains2 ?? payload.domains2)
       setWildcard(config.wildcard ?? payload.wildcard)
       setTimezone(config.timezone)
       setApplyTime(config.applyTime || '00:00')
@@ -613,8 +629,18 @@ function MainApp() {
         </div>
 
         <DomainUploader
+          title="Account 1 · Old domains"
+          description="CSV / paste for CLOUDFLARE_API_TOKEN (first Cloudflare account)"
           domains={domains}
           onChange={handleDomainsChange}
+          disabled={applying || saving}
+        />
+
+        <DomainUploader
+          title="Account 2 · Old domains"
+          description="CSV / paste for CLOUDFLARE_API_TOKEN_2 (second Cloudflare account)"
+          domains={domains2}
+          onChange={handleDomains2Change}
           disabled={applying || saving}
         />
 
