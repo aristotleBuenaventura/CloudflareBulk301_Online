@@ -50,6 +50,7 @@ function sanitizeResult(row: DomainResult): DomainResult | null {
   const message = row.message
     ? sanitizePlainText(row.message, MAX_MESSAGE_LEN)
     : undefined
+  // Never include zoneId or other internal fields.
   return {
     domain,
     status,
@@ -98,6 +99,8 @@ export function buildPublicViewerPayload(
     .map(sanitizeResult)
     .filter((r): r is DomainResult => Boolean(r))
 
+  // Read-only summary only — never expose domains[], domains2[], full schedule,
+  // users, tokens, or KV keys. Viewer cannot mutate anything via this payload.
   return {
     ok: true,
     applyTime: sanitizePlainText(config.applyTime, 8),

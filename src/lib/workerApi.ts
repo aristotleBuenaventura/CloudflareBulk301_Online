@@ -437,12 +437,46 @@ export async function fetchPublicViewer(
   token: string,
 ): Promise<PublicViewerData> {
   const params = new URLSearchParams({ t: token })
-  const response = await apiFetch(
-    workerUrl,
-    `/api/public/viewer?${params.toString()}`,
+  // credentials: omit — viewer must not attach admin session cookies.
+  const response = await fetch(
+    joinUrl(workerUrl, `/api/public/viewer?${params.toString()}`),
+    {
+      method: 'GET',
+      credentials: 'omit',
+      headers: { Accept: 'application/json' },
+    },
   )
   if (!response.ok) throw new Error(await parseError(response))
-  return (await response.json()) as PublicViewerData
+  const body = (await response.json()) as PublicViewerData
+  // Defensive: ignore any unexpected write-related fields if a proxy tampers.
+  return {
+    ok: true,
+    applyTime: String(body.applyTime || ''),
+    timezone: String(body.timezone || ''),
+    wildcard: Boolean(body.wildcard),
+    today: {
+      dayKey: String(body.today?.dayKey || ''),
+      dayLabel: String(body.today?.dayLabel || ''),
+      targetUrl: String(body.today?.targetUrl || ''),
+    },
+    lastRun: body.lastRun
+      ? {
+          ranAt: String(body.lastRun.ranAt || ''),
+          dayKey: String(body.lastRun.dayKey || ''),
+          targetUrl: String(body.lastRun.targetUrl || ''),
+          success: Number(body.lastRun.success) || 0,
+          skipped: Number(body.lastRun.skipped) || 0,
+          failed: Number(body.lastRun.failed) || 0,
+          results: Array.isArray(body.lastRun.results)
+            ? body.lastRun.results.map((r) => ({
+                domain: String(r.domain || ''),
+                status: r.status,
+                message: r.message ? String(r.message) : undefined,
+              }))
+            : [],
+        }
+      : null,
+  }
 }
 
 export interface PublicViewerData {

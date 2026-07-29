@@ -598,8 +598,20 @@ export default {
         })
       }
 
-      // Public read-only viewer (token required — no session).
-      if (path === '/api/public/viewer' && request.method === 'GET') {
+      // Public read-only viewer (token required — no session, no writes).
+      if (path === '/api/public/viewer') {
+        if (request.method !== 'GET') {
+          return json(
+            request,
+            env,
+            {
+              error:
+                'Method not allowed. Viewer is read-only (GET only).',
+            },
+            405,
+            { Allow: 'GET' },
+          )
+        }
         const rate = await assertViewerRateLimit(env.CONFIG, request)
         if (!rate.ok) {
           return json(
@@ -617,8 +629,15 @@ export default {
           request.headers.get('X-Viewer-Token') ||
           ''
         if (!viewerTokenOk(env, provided)) {
-          return json(request, env, { error: 'Invalid or missing viewer token.' }, 401)
+          return json(
+            request,
+            env,
+            { error: 'Invalid or missing viewer token.' },
+            401,
+          )
         }
+        // Viewer token ≠ session: never grant config write / user / KV dump access.
+        // Payload is a sanitized status snapshot only (no domains lists, no schedule table).
         const config = await readConfig(env)
         const { dayKey, day } = getTargetForDate(config)
         const lastRunRaw = await env.CONFIG.get(LAST_RUN_KEY)
@@ -635,7 +654,10 @@ export default {
           dayLabel: day.label,
           targetUrl: day.targetUrl,
         })
-        return json(request, env, payload)
+        return json(request, env, payload, 200, {
+          'X-Viewer-Mode': 'read-only',
+          'X-Robots-Tag': 'noindex, nofollow',
+        })
       }
 
       // ——— Auth ———
@@ -1410,6 +1432,9 @@ export default {
       }
 
       if (path === '/api/clock' && request.method === 'GET') {
+        // Not public — schedule timing must not be scrapable without login.
+        const auth = await requireAppAccess(request, env)
+        if (!auth.ok) return auth.response
         const config = await readConfig(env)
         const clock = formatPhilippineClock(new Date(), config.timezone)
         const lastAuto = await env.CONFIG.get(LAST_AUTO_KEY)
