@@ -558,7 +558,16 @@ function MainApp() {
   }
 
   if (role === 'superadmin') {
-    return <AdminDashboard session={session} onLogout={logout} />
+    return (
+      <AdminDashboard
+        session={session}
+        onLogout={logout}
+        onAccessDenied={async () => {
+          setRole('admin')
+          setSession(null)
+        }}
+      />
+    )
   }
 
   return (

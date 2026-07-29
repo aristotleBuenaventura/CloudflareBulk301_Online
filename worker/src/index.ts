@@ -1233,6 +1233,7 @@ export default {
       }
 
       if (path === '/api/admin/users' && request.method === 'POST') {
+        // Superadmin-only: create operator (admin) accounts from the dashboard.
         const auth = await requireSuperadmin(request, env)
         if (!auth.ok) return auth.response
         const body = (await request.json().catch(() => ({}))) as {
@@ -1240,8 +1241,8 @@ export default {
           password?: string
           role?: string
         }
-        const role = normalizeRole(body.role || 'admin')
-        if (role === 'superadmin') {
+        // Ignore any client-supplied role — dashboard can only create admin users.
+        if (normalizeRole(body.role || 'admin') === 'superadmin') {
           return json(
             request,
             env,

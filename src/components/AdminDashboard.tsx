@@ -3,6 +3,7 @@ import {
   createAdminUser,
   deleteAdminUser,
   fetchAuditLog,
+  fetchSessionMe,
   forceLogoutAdminUser,
   listAdminUsers,
   resetAdminUserPassword,
@@ -14,6 +15,8 @@ import {
 interface AdminDashboardProps {
   session: WorkerSession
   onLogout: () => void | Promise<void>
+  /** Called when the session is not a superadmin (kick back to login / app). */
+  onAccessDenied?: () => void | Promise<void>
 }
 
 type AuditTab = 'login' | 'redirect' | 'settings'
@@ -127,7 +130,10 @@ function actorFromEvent(ev: AuditEvent): string | null {
 export function AdminDashboard({
   session,
   onLogout,
+  onAccessDenied,
 }: AdminDashboardProps) {
+  const [allowed, setAllowed] = useState(false)
+  const [gateChecking, setGateChecking] = useState(true)
   const [users, setUsers] = useState<ManagedUser[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -148,6 +154,38 @@ export function AdminDashboard({
   const [auditError, setAuditError] = useState<string | null>(null)
   const [auditTab, setAuditTab] = useState<AuditTab>('login')
 
+  // Superadmin-only gate — never trust client role alone.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const me = await fetchSessionMe(session.workerUrl)
+        if (cancelled) return
+        if (!me?.authenticated || me.role !== 'superadmin') {
+          setAllowed(false)
+          setGateChecking(false)
+          setError('Superadmin access required.')
+          if (onAccessDenied) await onAccessDenied()
+          else await onLogout()
+          return
+        }
+        setAllowed(true)
+      } catch {
+        if (!cancelled) {
+          setAllowed(false)
+          setError('Could not verify superadmin session.')
+          if (onAccessDenied) await onAccessDenied()
+          else await onLogout()
+        }
+      } finally {
+        if (!cancelled) setGateChecking(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [session.workerUrl, onLogout, onAccessDenied])
+
   const loadUsers = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!opts?.quiet) setRefreshing(true)
     try {
@@ -155,12 +193,18 @@ export function AdminDashboard({
       setUsers(list)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load accounts')
+      const msg = err instanceof Error ? err.message : 'Failed to load accounts'
+      setError(msg)
+      if (/superadmin|forbidden|403/i.test(msg)) {
+        setAllowed(false)
+        if (onAccessDenied) await onAccessDenied()
+        else await onLogout()
+      }
     } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [session])
+  }, [session, onLogout, onAccessDenied])
 
   const loadAudit = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!opts?.quiet) setAuditRefreshing(true)
@@ -179,6 +223,7 @@ export function AdminDashboard({
   }, [session])
 
   useEffect(() => {
+    if (!allowed) return
     void loadUsers()
     void loadAudit()
     const timer = window.setInterval(() => {
@@ -186,7 +231,7 @@ export function AdminDashboard({
       void loadAudit({ quiet: true })
     }, 15_000)
     return () => window.clearInterval(timer)
-  }, [loadUsers, loadAudit])
+  }, [allowed, loadUsers, loadAudit])
 
   useEffect(() => {
     if (!notice) return
@@ -196,6 +241,7 @@ export function AdminDashboard({
 
   async function onCreate(event: FormEvent) {
     event.preventDefault()
+    if (!allowed) return
     setCreating(true)
     setNotice(null)
     setError(null)
@@ -303,6 +349,33 @@ export function AdminDashboard({
     isSettingsAction(e.action),
   ).length
 
+  if (gateChecking) {
+    return (
+      <div className="app-shell admin-shell">
+        <div className="app-atmosphere" aria-hidden="true" />
+        <main className="workspace" style={{ maxWidth: 480 }}>
+          <p className="status-line">Verifying superadmin access…</p>
+        </main>
+      </div>
+    )
+  }
+
+  if (!allowed) {
+    return (
+      <div className="app-shell admin-shell">
+        <div className="app-atmosphere" aria-hidden="true" />
+        <main className="workspace" style={{ maxWidth: 480 }}>
+          <p className="admin-banner error">
+            {error || 'Superadmin access required. Only superadmin can open this dashboard.'}
+          </p>
+          <button type="button" className="ghost-btn" onClick={() => void onLogout()}>
+            Sign out
+          </button>
+        </main>
+      </div>
+    )
+  }
+
   return (
     <div className="app-shell admin-shell">
       <div className="app-atmosphere" aria-hidden="true" />
@@ -361,7 +434,7 @@ export function AdminDashboard({
             <div className="section-head">
               <div>
                 <h2>Add account</h2>
-                <p>Create an admin. Superadmin cannot be created here.</p>
+                <p>Superadmin only · creates an admin operator (not another superadmin).</p>
               </div>
             </div>
             <form className="admin-form" onSubmit={onCreate}>

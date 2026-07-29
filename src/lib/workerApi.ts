@@ -209,6 +209,7 @@ export async function createAdminUser(
 ): Promise<ManagedUser> {
   const response = await apiFetch(session.workerUrl, '/api/admin/users', {
     method: 'POST',
+    // Role is forced to admin on the Worker; never send superadmin from the client.
     body: JSON.stringify({ ...input, role: 'admin' }),
   })
   if (!response.ok) throw new Error(await parseError(response))
