@@ -248,11 +248,11 @@ async function requireSession(
   return { ok: true, session }
 }
 
-/** Operator app access — session + completed 2FA. Superadmin is user-mgmt only. */
+/** Operator app access — session + completed 2FA + admin role. Superadmin is user-mgmt only. */
 async function requireAppAccess(
   request: Request,
   env: Env,
-): Promise<AuthOk | AuthFail> {
+): Promise<AuthUserOk | AuthFail> {
   const auth = await requireSession(request, env)
   if (!auth.ok) return auth
   const user = await getUser(env.CONFIG, auth.session.email)
@@ -270,7 +270,8 @@ async function requireAppAccess(
       ),
     }
   }
-  if (normalizeRole(user.role) === 'superadmin') {
+  const role = normalizeRole(user.role)
+  if (role === 'superadmin') {
     return {
       ok: false,
       response: json(
@@ -284,7 +285,36 @@ async function requireAppAccess(
       ),
     }
   }
-  return auth
+  if (role !== 'admin') {
+    return {
+      ok: false,
+      response: json(
+        request,
+        env,
+        {
+          error:
+            'Admin role required. Only admin accounts can use Bulk301 settings.',
+        },
+        403,
+      ),
+    }
+  }
+  return {
+    ok: true,
+    session: auth.session,
+    role: 'admin',
+    email: user.email,
+  }
+}
+
+/**
+ * Mutating schedule / settings / domains — admin + 2FA only.
+ */
+async function requireAdminEditor(
+  request: Request,
+  env: Env,
+): Promise<AuthUserOk | AuthFail> {
+  return requireAppAccess(request, env)
 }
 
 
@@ -1409,13 +1439,15 @@ export default {
           today: { dayKey, targetUrl: day.targetUrl },
           lastRun,
           clock,
-          email: auth.session.email,
+          email: auth.email,
+          role: auth.role,
+          canEdit: auth.role === 'admin',
           totpEnabled: Boolean(user?.totpEnabled),
         })
       }
 
       if (path === '/api/config' && request.method === 'PUT') {
-        const auth = await requireAppAccess(request, env)
+        const auth = await requireAdminEditor(request, env)
         if (!auth.ok) return auth.response
         const current = await readConfig(env)
         const body = (await request.json()) as Partial<AppConfig>
@@ -1432,14 +1464,14 @@ export default {
             request,
             'config_saved',
             changes.join(' · '),
-            { actor: auth.session.email, changes },
+            { actor: auth.email, changes },
           )
         }
         return json(request, env, { ok: true, config: next })
       }
 
       if (path === '/api/reset-auto' && request.method === 'POST') {
-        const auth = await requireAppAccess(request, env)
+        const auth = await requireAdminEditor(request, env)
         if (!auth.ok) return auth.response
         await env.CONFIG.delete(LAST_AUTO_KEY)
         await env.CONFIG.delete('last_auto_date')

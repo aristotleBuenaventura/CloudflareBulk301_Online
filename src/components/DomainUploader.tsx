@@ -7,6 +7,7 @@ interface DomainUploaderProps {
   domains: string[]
   onChange: (domains: string[]) => void
   disabled?: boolean
+  readOnly?: boolean
 }
 
 export function DomainUploader({
@@ -15,12 +16,15 @@ export function DomainUploader({
   domains,
   onChange,
   disabled,
+  readOnly = false,
 }: DomainUploaderProps) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [manual, setManual] = useState('')
   const [fileName, setFileName] = useState<string | null>(null)
+  const locked = Boolean(disabled || readOnly)
 
   function mergeDomains(incoming: string[]) {
+    if (readOnly) return
     const set = new Set(domains.map((d) => d.trim()).filter(Boolean))
     for (const d of incoming) {
       const trimmed = d.trim()
@@ -31,6 +35,7 @@ export function DomainUploader({
 
   function handleAddManual(e: FormEvent) {
     e.preventDefault()
+    if (readOnly) return
     const parsed = parseDomains(manual)
     if (parsed.length === 0) return
     mergeDomains(parsed)
@@ -38,6 +43,7 @@ export function DomainUploader({
   }
 
   async function handleFile(e: ChangeEvent<HTMLInputElement>) {
+    if (readOnly) return
     const file = e.target.files?.[0]
     if (!file) return
     const text = await file.text()
@@ -48,6 +54,7 @@ export function DomainUploader({
   }
 
   function removeDomain(domain: string) {
+    if (readOnly) return
     onChange(domains.filter((d) => d !== domain))
   }
 
@@ -56,72 +63,82 @@ export function DomainUploader({
       <div className="section-head">
         <div>
           <h2>{title}</h2>
-          <p>{description}</p>
+          <p>
+            {readOnly
+              ? 'View only · admin can upload or edit domains'
+              : description}
+          </p>
         </div>
         <span className="count-badge">{domains.length}</span>
       </div>
 
-      <div className="domains-toolbar">
-        <button
-          type="button"
-          className="secondary-btn"
-          disabled={disabled}
-          onClick={() => fileRef.current?.click()}
-        >
-          Upload CSV
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".csv,.txt,text/csv,text/plain"
-          hidden
-          onChange={handleFile}
-        />
-        <button
-          type="button"
-          className="ghost-btn"
-          disabled={disabled || domains.length === 0}
-          onClick={() => {
-            onChange([])
-            setFileName(null)
-          }}
-        >
-          Clear
-        </button>
-        {fileName && <span className="file-chip">{fileName}</span>}
-      </div>
+      {!readOnly && (
+        <>
+          <div className="domains-toolbar">
+            <button
+              type="button"
+              className="secondary-btn"
+              disabled={locked}
+              onClick={() => fileRef.current?.click()}
+            >
+              Upload CSV
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,.txt,text/csv,text/plain"
+              hidden
+              onChange={handleFile}
+            />
+            <button
+              type="button"
+              className="ghost-btn"
+              disabled={locked || domains.length === 0}
+              onClick={() => {
+                onChange([])
+                setFileName(null)
+              }}
+            >
+              Clear
+            </button>
+            {fileName && <span className="file-chip">{fileName}</span>}
+          </div>
 
-      <form className="manual-add" onSubmit={handleAddManual}>
-        <textarea
-          value={manual}
-          onChange={(e) => setManual(e.target.value)}
-          placeholder={'oldsite1.com\noldsite2.com'}
-          rows={3}
-          disabled={disabled}
-          spellCheck={false}
-        />
-        <button
-          type="submit"
-          className="secondary-btn"
-          disabled={disabled || !manual.trim()}
-        >
-          Add
-        </button>
-      </form>
+          <form className="manual-add" onSubmit={handleAddManual}>
+            <textarea
+              value={manual}
+              onChange={(e) => setManual(e.target.value)}
+              placeholder={'oldsite1.com\noldsite2.com'}
+              rows={3}
+              disabled={locked}
+              spellCheck={false}
+            />
+            <button
+              type="submit"
+              className="secondary-btn"
+              disabled={locked || !manual.trim()}
+            >
+              Add
+            </button>
+          </form>
+        </>
+      )}
 
       {domains.length > 0 && (
         <ul className="domain-list">
           {domains.map((domain) => (
             <li key={domain}>
               <span className="domain-name">{domain}</span>
-              <button
-                type="button"
-                aria-label={`Remove ${domain}`}
-                disabled={disabled}
-                onClick={() => removeDomain(domain)}
-              >
-                Remove
-              </button>
+              {!readOnly && (
+                <button
+                  type="button"
+                  aria-label={`Remove ${domain}`}
+                  disabled={locked}
+                  onClick={() => removeDomain(domain)}
+                >
+                  Remove
+                </button>
+              )}
             </li>
           ))}
         </ul>

@@ -385,24 +385,27 @@ function MainApp() {
   }, [session])
 
   const updateSchedule = useCallback((key: DayKey, targetUrl: string) => {
+    if (role !== 'admin') return
     setSchedule((prev) =>
       prev.map((day) => (day.key === key ? { ...day, targetUrl } : day)),
     )
     setDirty(true)
-  }, [])
+  }, [role])
 
   const handleDomainsChange = useCallback((next: string[]) => {
+    if (role !== 'admin') return
     setDomains(next)
     setDirty(true)
-  }, [])
+  }, [role])
 
   const handleDomains2Change = useCallback((next: string[]) => {
+    if (role !== 'admin') return
     setDomains2(next)
     setDirty(true)
-  }, [])
+  }, [role])
 
   const handleSave = useCallback(async () => {
-    if (!session || savingRef.current) return
+    if (!session || savingRef.current || role !== 'admin') return
     savingRef.current = true
     setSaving(true)
     setStatusMessage(null)
@@ -442,7 +445,7 @@ function MainApp() {
       savingRef.current = false
       setSaving(false)
     }
-  }, [session])
+  }, [session, role])
 
   useEffect(() => {
     if (!session || dirty || !totpEnabled || role === 'superadmin') return
@@ -511,6 +514,7 @@ function MainApp() {
   }
 
   const runState = applying ? 'running' : dirty ? 'dirty' : 'idle'
+  const canEdit = role === 'admin'
 
   if (!totpEnabled) {
     return (
@@ -581,6 +585,9 @@ function MainApp() {
           <span className="worker-chip" title={session.email}>
             {session.email}
           </span>
+          <span className="role-badge role-admin" title="Admin can edit settings">
+            Admin
+          </span>
           <button
             type="button"
             className="ghost-btn"
@@ -592,12 +599,19 @@ function MainApp() {
       </header>
 
       <main className="workspace">
+        {!canEdit && (
+          <p className="admin-banner error">
+            Settings are locked. Only an admin account can edit weekly targets,
+            apply time, or domains.
+          </p>
+        )}
         <div className="workspace-grid">
           <ScheduleEditor
             schedule={schedule}
             highlightDate={highlightDate}
             dirty={dirty}
             saving={saving}
+            readOnly={!canEdit}
             onChange={updateSchedule}
             onSave={() => void handleSave()}
           />
@@ -605,16 +619,19 @@ function MainApp() {
             schedule={schedule}
             wildcard={wildcard}
             onWildcardChange={(v) => {
+              if (!canEdit) return
               setWildcard(v)
               setDirty(true)
             }}
             timezone={timezone}
             onTimezoneChange={(v) => {
+              if (!canEdit) return
               setTimezone(v)
               setDirty(true)
             }}
             applyTime={applyTime}
             onApplyTimeChange={(v) => {
+              if (!canEdit) return
               setApplyTime(v)
               setDirty(true)
             }}
@@ -625,6 +642,7 @@ function MainApp() {
             lastRun={lastRun}
             progressLabel={statusMessage}
             progress={progress}
+            readOnly={!canEdit}
           />
         </div>
 
@@ -634,6 +652,7 @@ function MainApp() {
           domains={domains}
           onChange={handleDomainsChange}
           disabled={applying || saving}
+          readOnly={!canEdit}
         />
 
         <DomainUploader
@@ -642,6 +661,7 @@ function MainApp() {
           domains={domains2}
           onChange={handleDomains2Change}
           disabled={applying || saving}
+          readOnly={!canEdit}
         />
 
         <ResultsPanel

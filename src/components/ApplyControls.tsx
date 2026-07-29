@@ -16,6 +16,7 @@ interface ApplyControlsProps {
   lastRun: ApplyRunSummary | null
   progressLabel?: string | null
   progress?: { completed: number; total: number; currentDomain?: string } | null
+  readOnly?: boolean
 }
 
 export function ApplyControls({
@@ -33,17 +34,24 @@ export function ApplyControls({
   lastRun,
   progressLabel,
   progress,
+  readOnly = false,
 }: ApplyControlsProps) {
   const today = new Date()
   const targetDay = getTargetForDate(schedule, today)
+  const locked = readOnly || applying || saving
 
   return (
     <section className="section apply-section">
       <div className="section-head">
         <div>
           <h2>When it runs</h2>
-          <p>Exact minute · Asia/Manila by default</p>
+          <p>
+            {readOnly
+              ? 'View only · admin can change settings'
+              : 'Exact minute · Asia/Manila by default'}
+          </p>
         </div>
+        {readOnly && <span className="status-dot is-warn">Locked</span>}
       </div>
 
       <div className="apply-fields">
@@ -53,7 +61,7 @@ export function ApplyControls({
             type="time"
             value={applyTime}
             onChange={(e) => onApplyTimeChange(e.target.value)}
-            disabled={applying || saving}
+            disabled={locked}
           />
         </label>
 
@@ -64,7 +72,7 @@ export function ApplyControls({
             value={timezone}
             onChange={(e) => onTimezoneChange(e.target.value)}
             placeholder="Asia/Manila"
-            disabled={applying || saving}
+            disabled={locked}
             spellCheck={false}
           />
         </label>
@@ -75,7 +83,7 @@ export function ApplyControls({
           type="checkbox"
           checked={wildcard}
           onChange={(e) => onWildcardChange(e.target.checked)}
-          disabled={applying || saving}
+          disabled={locked}
         />
         <span>Preserve path &amp; query</span>
       </label>
@@ -124,14 +132,16 @@ export function ApplyControls({
         </p>
       )}
 
-      <button
-        type="button"
-        className="primary-btn apply-save"
-        disabled={applying || saving}
-        onClick={onSave}
-      >
-        {saving ? 'Saving…' : 'Save settings'}
-      </button>
+      {!readOnly && (
+        <button
+          type="button"
+          className="primary-btn apply-save"
+          disabled={applying || saving}
+          onClick={onSave}
+        >
+          {saving ? 'Saving…' : 'Save settings'}
+        </button>
+      )}
     </section>
   )
 }

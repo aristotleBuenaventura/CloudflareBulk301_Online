@@ -6,6 +6,7 @@ interface ScheduleEditorProps {
   highlightDate: Date
   dirty?: boolean
   saving?: boolean
+  readOnly?: boolean
   onChange: (key: DaySchedule['key'], targetUrl: string) => void
   onSave?: () => void
 }
@@ -15,20 +16,29 @@ export function ScheduleEditor({
   highlightDate,
   dirty = false,
   saving = false,
+  readOnly = false,
   onChange,
   onSave,
 }: ScheduleEditorProps) {
   const activeKey = dayKeyFromDate(highlightDate)
+  const locked = readOnly || saving
 
   return (
     <section className="section schedule-section">
       <div className="section-head">
         <div>
           <h2>Weekly targets</h2>
-          <p>Enter to save · 301s run on schedule only</p>
+          <p>
+            {readOnly
+              ? 'View only · admin can edit targets'
+              : 'Enter to save · 301s run on schedule only'}
+          </p>
         </div>
-        {dirty && <span className="status-dot is-warn">Unsaved</span>}
+        {dirty && !readOnly && (
+          <span className="status-dot is-warn">Unsaved</span>
+        )}
         {saving && <span className="status-dot">Saving…</span>}
+        {readOnly && <span className="status-dot is-warn">Locked</span>}
       </div>
 
       <div className="schedule-list" role="list">
@@ -52,9 +62,11 @@ export function ScheduleEditor({
                 inputMode="url"
                 autoComplete="off"
                 value={day.targetUrl}
-                disabled={saving}
+                disabled={locked}
+                readOnly={readOnly}
                 onChange={(e) => onChange(day.key, e.target.value)}
                 onKeyDown={(e) => {
+                  if (readOnly) return
                   if (e.key === 'Enter') {
                     e.preventDefault()
                     if (onSave) onSave()

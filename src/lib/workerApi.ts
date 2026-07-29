@@ -31,6 +31,8 @@ export interface ConfigResponse {
   lastRun: ApplyRunSummary | null
   totpEnabled?: boolean
   email?: string
+  role?: UserRole
+  canEdit?: boolean
 }
 
 export interface DueCheckResponse {
