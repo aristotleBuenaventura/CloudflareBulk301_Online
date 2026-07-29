@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { formatApplyTime12 } from '../lib/applyTime'
 import { fetchPublicViewer, type PublicViewerData } from '../lib/workerApi'
 import { ResultsPanel } from './ResultsPanel'
 
@@ -94,7 +95,9 @@ export function PublicViewer() {
               <div className="apply-fields viewer-meta">
                 <div className="field">
                   <span>Time</span>
-                  <strong className="viewer-meta-value">{data.applyTime}</strong>
+                  <strong className="viewer-meta-value">
+                    {formatApplyTime12(data.applyTime)}
+                  </strong>
                 </div>
                 <div className="field">
                   <span>Timezone</span>
