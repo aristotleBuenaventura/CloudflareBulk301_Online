@@ -780,11 +780,16 @@ export function AdminDashboard({
               Remove <strong>{deleteTarget.email}</strong>? They will no longer
               be able to sign in.
             </p>
+            {error ? <p className="admin-banner error">{error}</p> : null}
             <div className="admin-modal-actions">
               <button
                 type="button"
                 className="ghost-btn"
-                onClick={() => setDeleteTarget(null)}
+                onClick={() => {
+                  setDeleteTarget(null)
+                  setError(null)
+                }}
+                disabled={busyEmail === deleteTarget.email}
               >
                 Cancel
               </button>
@@ -794,7 +799,7 @@ export function AdminDashboard({
                 disabled={busyEmail === deleteTarget.email}
                 onClick={() => void onConfirmDelete()}
               >
-                Delete account
+                {busyEmail === deleteTarget.email ? 'Deleting…' : 'Delete account'}
               </button>
             </div>
           </div>

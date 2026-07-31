@@ -46,7 +46,7 @@ export function corsHeadersFor(
 ): Record<string, string> {
   const origin = request.headers.get('Origin') || ''
   const headers: Record<string, string> = {
-    'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Max-Age': '600',
