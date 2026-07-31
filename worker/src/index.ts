@@ -176,14 +176,8 @@ async function requireSession(
   request: Request,
   env: Env,
 ): Promise<AuthOk | AuthFail> {
-  const allowlist = parseIpAllowlist(env.IP_ALLOWLIST)
-  if (!isIpAllowed(request, allowlist)) {
-    await appendAudit(env.CONFIG, request, 'login_ip_blocked', 'session check')
-    return {
-      ok: false,
-      response: json(request, env, { error: 'IP not allowed.' }, 403),
-    }
-  }
+  // Login/session are not IP-gated — password + 2FA + rate limits cover multi-device.
+  // IP_ALLOWLIST applies only to first-user bootstrap (see upsert-user).
 
   const raw = readCookie(request)
   if (!raw) {
@@ -671,15 +665,11 @@ export default {
         )
       }
 
-      // First user: ADMIN_SECRET only (optionally IP allowlisted).
-      // Later users: authenticated 2FA session + ADMIN_SECRET.
+      // First user: ADMIN_SECRET + IP_ALLOWLIST (when public).
+      // Later users: authenticated superadmin session + ADMIN_SECRET (any IP).
       if (path === '/api/auth/upsert-user' && request.method === 'POST') {
         const allowlist = parseIpAllowlist(env.IP_ALLOWLIST)
         const publicInternet = isPublicInternet(env)
-        if (allowlist.length > 0 && !isIpAllowed(request, allowlist)) {
-          await appendAudit(env.CONFIG, request, 'login_ip_blocked', 'upsert-user')
-          return json(request, env, { error: 'IP not allowed.' }, 403)
-        }
 
         const rate = await assertBootstrapRateLimit(env.CONFIG, request)
         if (!rate.ok) {
@@ -795,12 +785,6 @@ export default {
       }
 
       if (path === '/api/auth/login' && request.method === 'POST') {
-        const allowlist = parseIpAllowlist(env.IP_ALLOWLIST)
-        if (!isIpAllowed(request, allowlist)) {
-          await appendAudit(env.CONFIG, request, 'login_ip_blocked')
-          return json(request, env, { error: 'IP not allowed.' }, 403)
-        }
-
         const rate = await assertLoginRateLimit(env.CONFIG, request)
         if (!rate.ok) {
           await appendAudit(env.CONFIG, request, 'login_rate_limited')
@@ -1023,16 +1007,52 @@ export default {
 
         const { token } = await createPasswordResetToken(env.CONFIG, user.email)
         const resetUrl = buildResetUrl(env, token)
-        const delivery = await sendPasswordResetEmail(env, {
-          to: user.email,
-          resetUrl,
-        })
+        let delivery: { sent: boolean; logged: boolean }
+        try {
+          delivery = await sendPasswordResetEmail(env, {
+            to: user.email,
+            resetUrl,
+          })
+        } catch (error) {
+          await appendAudit(
+            env.CONFIG,
+            request,
+            'password_reset_requested',
+            `${user.email} email_failed ${error instanceof Error ? error.message : String(error)}`,
+          )
+          return json(
+            request,
+            env,
+            {
+              error:
+                'Could not send the reset email. Try again later or contact an admin.',
+            },
+            503,
+          )
+        }
+        if (!delivery.sent) {
+          await appendAudit(
+            env.CONFIG,
+            request,
+            'password_reset_requested',
+            `${user.email} email_not_configured`,
+          )
+          return json(
+            request,
+            env,
+            {
+              error:
+                'Password reset email is not configured on the server. Contact an admin.',
+            },
+            503,
+          )
+        }
         await markResetCooldown(env.CONFIG, user.email)
         await appendAudit(
           env.CONFIG,
           request,
           'password_reset_requested',
-          `${user.email} ${delivery.sent ? 'email_sent' : 'email_logged'}`,
+          `${user.email} email_sent`,
         )
         return json(request, env, {
           ok: true,

@@ -17,9 +17,14 @@ preview_id = "b512bab0241f45f0af1ace966a3e4366"
 TIMEZONE = "Asia/Manila"
 PUBLIC_INTERNET = "true"
 ALLOWED_ORIGINS = "https://gachuoi.app"
+# Used only for first-user bootstrap when PUBLIC_INTERNET=true (not for daily login).
 IP_ALLOWLIST = "110.235.166.92,2400:6a80:8610:37e0:ccab:e4fa:28ae:3959"
 COOKIE_SAMESITE = "None"
 APP_URL = "https://gachuoi.app"
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = "465"
+SMTP_USER = "aris@casinomcw.com"
+SMTP_FROM = "Bulk301 <aris@casinomcw.com>"
 # BIND_SESSION_IP = "true"
 
 # Secrets (set via CLI — never commit):
@@ -27,8 +32,7 @@ APP_URL = "https://gachuoi.app"
 #   npx wrangler secret put CLOUDFLARE_API_TOKEN_2
 #   npx wrangler secret put ADMIN_SECRET
 #   npx wrangler secret put SMTP_PASS
-# Optional vars/secrets for forgot-password email:
-#   APP_URL, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_FROM
+# Optional: TELEGRAM_*, VIEWER_TOKEN
 # ADMIN_SECRET must be 16+ chars and not a placeholder when PUBLIC_INTERNET=true
 #
 # Token least privilege (recommended):

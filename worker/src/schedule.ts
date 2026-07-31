@@ -69,10 +69,16 @@ function toMinutes(hhmm: string): number {
 }
 
 /**
- * Fire ONLY at the exact scheduled HH:MM (Philippine/local timezone), once per
- * date+applyTime. Target URL is NOT part of the fingerprint — changing a
- * target after (or during) today's slot must not re-trigger 301s / Telegram.
- * Never catch-up after the minute.
+ * Cloudflare Cron can fire slightly after the scheduled minute. Allow a short
+ * same-day grace window so apply still runs with the browser closed.
+ * Still once per date|applyTime; no all-day catch-up (target edits later OK).
+ */
+export const SCHEDULE_GRACE_MINUTES = 2
+
+/**
+ * Fire at scheduled HH:MM (local timezone), once per date+applyTime.
+ * Target URL is NOT part of the fingerprint.
+ * Grace: applyTime .. applyTime+SCHEDULE_GRACE_MINUTES (same calendar day).
  */
 export function shouldRunScheduledApply(
   config: AppConfig,
@@ -110,8 +116,13 @@ export function shouldRunScheduledApply(
     }
   }
 
-  if (currentTime !== applyTime) {
-    const waiting = toMinutes(currentTime) < toMinutes(applyTime)
+  const nowMin = toMinutes(currentTime)
+  const applyMin = toMinutes(applyTime)
+  const inWindow =
+    nowMin >= applyMin && nowMin <= applyMin + SCHEDULE_GRACE_MINUTES
+
+  if (!inWindow) {
+    const waiting = nowMin < applyMin
     return {
       run: false,
       dateKey,

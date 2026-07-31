@@ -656,7 +656,7 @@ function MainApp() {
         </div>
 
         <DomainUploader
-          title="Account 1 · Old domains"
+          title="New Brands Account · Old domains"
           description="CSV / paste for CLOUDFLARE_API_TOKEN (first Cloudflare account)"
           domains={domains}
           onChange={handleDomainsChange}
@@ -665,7 +665,7 @@ function MainApp() {
         />
 
         <DomainUploader
-          title="Account 2 · Old domains"
+          title="MCW Account · Old domains"
           description="CSV / paste for CLOUDFLARE_API_TOKEN_2 (second Cloudflare account)"
           domains={domains2}
           onChange={handleDomains2Change}
