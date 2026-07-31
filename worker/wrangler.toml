@@ -10,16 +10,16 @@ crons = ["* * * * *"]
 # Replace ids after: npm run kv:create (from worker/)
 [[kv_namespaces]]
 binding = "CONFIG"
-id = "00000000000000000000000000000000"
-preview_id = "00000000000000000000000000000001"
+id = "f27b958fadb24c5b9e04e7e7022153c0"
+preview_id = "b512bab0241f45f0af1ace966a3e4366"
 
 [vars]
 TIMEZONE = "Asia/Manila"
-# For public internet deploy, set these (Cloudflare dashboard or uncomment):
-# PUBLIC_INTERNET = "true"
-# ALLOWED_ORIGINS = "https://your-ui.example.com"
-# IP_ALLOWLIST = "203.0.113.10"
-# COOKIE_SAMESITE = "None"
+PUBLIC_INTERNET = "true"
+ALLOWED_ORIGINS = "https://gachuoi.app"
+IP_ALLOWLIST = "110.235.166.92,2400:6a80:8610:37e0:ccab:e4fa:28ae:3959"
+COOKIE_SAMESITE = "None"
+APP_URL = "https://gachuoi.app"
 # BIND_SESSION_IP = "true"
 
 # Secrets (set via CLI — never commit):

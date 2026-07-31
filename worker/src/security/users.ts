@@ -55,7 +55,8 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 export async function hashPassword(password: string): Promise<string> {
-  const iterations = 200_000
+  // Cloudflare Workers WebCrypto caps PBKDF2 at 100_000 iterations.
+  const iterations = 100_000
   const salt = new Uint8Array(16)
   crypto.getRandomValues(salt)
   const key = await crypto.subtle.importKey(
